@@ -228,7 +228,7 @@ const ManageMenuItems = () => {
       <div className='flex flex-col justify-center items-center'>
         <div className="w-[55%] mb-6">
           <label className="block font-medium mb-2">Import menu from photo (PNG/JPEG)</label>
-          <input type="file" accept="image/png, image/jpeg" onChange={handleIngestFile} />
+          <input type="file" accept="image/png, image/jpeg, application/pdf" onChange={handleIngestFile} />
           {isIngesting && (
             <div className="text-sm text-gray-600 mt-2">Extracting items...</div>
           )}

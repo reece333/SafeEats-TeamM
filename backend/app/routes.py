@@ -278,7 +278,7 @@ def _select_model_name() -> str:
 
 
 @router.post("/ai/ingest-menu")
-async def ingest_menu_image(
+async def ingest_menu_file(  # 1. Renamed for clarity
     file: UploadFile = File(...), token_data: dict = Depends(verify_token)
 ):
     try:
@@ -286,12 +286,25 @@ async def ingest_menu_image(
         if not user_id:
             raise HTTPException(status_code=401, detail="Invalid user token")
 
-        if file.content_type not in ("image/png", "image/jpeg", "image/jpg"):
+        # 2. Add "application/pdf" to supported types
+        supported_mime_types = (
+            "image/png",
+            "image/jpeg",
+            "image/jpg",
+            "application/pdf",
+        )
+        if file.content_type not in supported_mime_types:
             raise HTTPException(
-                status_code=400, detail="Only PNG/JPEG images are supported in this MVP"
+                status_code=400,
+                # 3. Update error message
+                detail="Only PNG/JPEG images and PDFs are supported.",
             )
 
         _ensure_genai_configured()
+
+        # 4. IMPORTANT: Ensure this selects a model that supports PDFs,
+        #    e.g., "gemini-1.5-flash" or "gemini-1.5-pro".
+        #    The older "gemini-pro-vision" will NOT work for PDFs.
         model_name = _select_model_name()
         model = genai.GenerativeModel(
             model_name=model_name,
@@ -301,15 +314,18 @@ async def ingest_menu_image(
             },
         )
 
-        image_bytes = await file.read()
-        image_part = {
+        file_bytes = await file.read()
+
+        # 5. This logic now works for images AND PDFs seamlessly
+        model_part = {
             "mime_type": file.content_type,
-            "data": image_bytes,
+            "data": file_bytes,
         }
 
+        # 6. Update prompt to be file-generic
         prompt = (
-            "Extract menu items from this image. Return ONLY strict JSON with key 'items' "
-            "as an array of objects: {name, description, price, ingredients}.\n"
+            "Extract menu items from this document (image or PDF). Return ONLY strict JSON "
+            "with key 'items' as an array of objects: {name, description, price, ingredients}.\n"
             "- name: string, concise item name.\n"
             "- description: string, may be empty if none.\n"
             "- price: number in dollars (no currency symbol, no ranges).\n"
@@ -317,7 +333,8 @@ async def ingest_menu_image(
             "Do not include any additional commentary."
         )
 
-        response = model.generate_content([prompt, image_part])
+        # 7. The AI call is identical, just using the generic 'model_part'
+        response = model.generate_content([prompt, model_part])
         raw_text = response.text or ""
 
         try:
@@ -334,7 +351,10 @@ async def ingest_menu_image(
         if not isinstance(items, list):
             items = []
 
-        # Normalize and enrich with allergens/dietaryCategories via the same AI logic
+        # --- NO CHANGES NEEDED BELOW THIS LINE ---
+        # This entire section processes the *text* extracted by the first
+        # AI call, so it's completely independent of the original file type.
+
         normalized_items = []
         for item in items:
             name = (item.get("name") or "").strip()
@@ -441,8 +461,9 @@ async def ingest_menu_image(
     except HTTPException:
         raise
     except Exception as e:
-        print(f"Ingest image error: {str(e)}")
-        raise HTTPException(status_code=500, detail="Failed to ingest menu image")
+        # 8. Update log/error messages
+        print(f"Ingest file error: {str(e)}")
+        raise HTTPException(status_code=500, detail="Failed to ingest menu file")
 
 
 @router.post("/restaurants/")
