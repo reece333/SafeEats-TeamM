@@ -226,9 +226,14 @@ const ManageMenuItems = () => {
       )}
 
       <div className='flex flex-col justify-center items-center'>
-        <div className="w-[55%] mb-6">
-          <label className="block font-medium mb-2">Import menu from photo (PNG/JPEG)</label>
-          <input type="file" accept="image/png, image/jpeg, application/pdf" onChange={handleIngestFile} />
+        <div className="w-[55%] mb-6 flex flex-col items-center">
+          <button
+              onClick={() => document.getElementById('file-upload').click()}
+              className="block w-full max-w-96 text-center bg-[#8DB670] rounded-xl pt-4 pb-4 font-semibold text-white mt-2 hover:bg-[#6c8b55] disabled:bg-gray-400"
+            >
+              Import Menu (PNG/JPEG/PDF)
+            </button>
+          <input id="file-upload" type="file" accept="image/png, image/jpeg, application/pdf" onChange={handleIngestFile} className="hidden"/>
           {isIngesting && (
             <div className="text-sm text-gray-600 mt-2">Extracting items...</div>
           )}
@@ -260,7 +265,7 @@ const ManageMenuItems = () => {
             >
               <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#ffffff" strokeWidth="5" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
           </button>
-          <div className='flex flex-col justify-center items-center gap-6 mt-10'>
+          <div className='clear-right flex flex-col justify-center items-center gap-6 mt-10'>
             <button
               onClick={handleAddAllItems}
               disabled={loading}

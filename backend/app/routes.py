@@ -8,6 +8,8 @@ from auth_routes import verify_token
 import os
 import json
 from pydantic import BaseModel
+from google.generativeai.types import RequestOptions
+from google.api_core import retry
 
 try:
     import google.generativeai as genai
@@ -324,17 +326,39 @@ async def ingest_menu_file(  # 1. Renamed for clarity
 
         # 6. Update prompt to be file-generic
         prompt = (
-            "Extract menu items from this document (image or PDF). Return ONLY strict JSON "
-            "with key 'items' as an array of objects: {name, description, price, ingredients}.\n"
-            "- name: string, concise item name.\n"
-            "- description: string, may be empty if none.\n"
-            "- price: number in dollars (no currency symbol, no ranges).\n"
-            "- ingredients: comma-separated string of ingredients if visible; else empty.\n"
-            "Do not include any additional commentary."
+            "You are a high-accuracy menu extraction bot. Your sole task is to extract menu items "
+            "from the document and return ONLY a single, strict JSON object.\n"
+            "Do not include any preamble, explanations, or any text other than the JSON object.\n\n"
+            "The JSON object must have a single key 'items', which is an array of item objects.\n"
+            "Each item object must have this exact structure:\n"
+            "{\n"
+            "  'name': 'string', (The concise, primary name of the item)\n"
+            "  'description': 'string', (The description text, or '' if none)\n"
+            "  'price': number, (Numeric value only, e.g., 14.50. No currency symbols, no ranges.)\n"
+            "  'ingredients': [array of strings] (A list of all ingredient strings)\n"
+            "}\n\n"
+            "---"
+            "### **CRITICAL INSTRUCTIONS for 'ingredients' field**\n"
+            "You must build the ingredients list by following these steps IN ORDER:\n\n"
+            "1.  **Start with the Name:** ALWAYS add the main food component(s) from the item's 'name' as the first ingredient(s).\n"
+            "    * **Example:** If 'name' is 'Rigatoni', the 'ingredients' array **must** include 'rigatoni'.\n"
+            "    * **Example:** If 'name' is 'Chicken Sandwich', the 'ingredients' array **must** include 'chicken' and 'bread'.\n"
+            "    * **Example:** If 'name' is 'Mushroom Pizza', the 'ingredients' array **must** include 'mushroom' and 'pizza dough'.\n\n"
+            "2.  **Add from Description:** After adding from the name, scan the 'description' and add ALL other ingredients explicitly mentioned.\n"
+            "    * **Example:** If 'description' is 'topped with parmesan and fresh basil', you must add 'parmesan' and 'fresh basil' to the array.\n\n"
+            "3.  **Infer if Necessary:** If the description is empty, infer any other *absolutely essential* ingredients implied by the name that are not already listed.\n"
+            "    * **Example:** For 'Latte', you would first add 'latte' (from the name), then infer and add 'espresso' and 'milk'.\n"
+            "    * **Example:** For 'Queso Dip', you would first add 'queso' (from the name), then infer and add 'cheese'.\n\n"
+            "4.  **Format:** The final output for 'ingredients' MUST be a JSON array of strings."
         )
 
         # 7. The AI call is identical, just using the generic 'model_part'
-        response = model.generate_content([prompt, model_part])
+        response = model.generate_content(
+            [prompt, model_part],
+            request_options=RequestOptions(
+                retry=retry.Retry(initial=10, multiplier=2, maximum=60, timeout=300)
+            ),
+        )
         raw_text = response.text or ""
 
         try:
@@ -370,7 +394,15 @@ async def ingest_menu_file(  # 1. Renamed for clarity
                 except Exception:
                     price = 0.0
 
-            ingredients_text = (item.get("ingredients") or "").strip()
+            # Get the list of ingredients from the AI's output
+            ingredients_list = item.get("ingredients", []) or []
+
+            # Join the list of strings into a single comma-separated string
+            if isinstance(ingredients_list, list):
+                ingredients_text = ", ".join(ingredients_list)
+            else:
+                # Add a fallback in case the AI returned a single string by mistake
+                ingredients_text = str(ingredients_list).strip()
 
             # Reuse the same parsing pipeline by calling the model once more for ingredients
             ai_parse_request = ParseIngredientsRequest(ingredients=ingredients_text)
@@ -386,15 +418,48 @@ async def ingest_menu_file(  # 1. Renamed for clarity
                 },
             )
             ing_prompt = (
-                "You are extracting food safety attributes from free-text ingredient lists.\n"
-                "Given the text, return a strict JSON object with keys: allergens (array of strings), "
-                "dietaryCategories (array of strings), and extractedIngredients (array of strings).\n"
-                "The allowed allergen ids are: milk, eggs, fish, tree_nuts, wheat, shellfish, peanuts, soybeans, sesame.\n"
-                "The allowed dietary category ids are: vegan, vegetarian.\n"
-                "Normalize synonyms to these ids. Only output valid ids. If none, output empty arrays.\n"
-                f"Text: {ai_parse_request.ingredients}"
+                "You are an expert food safety and dietary attribute extractor. Your task is to analyze a free-text ingredient list and return a single, strict JSON object.\n"
+                "Do not provide any preamble, explanation, or any text other than the JSON object itself.\n\n"
+                "### JSON Structure:\n"
+                "{\n"
+                '  "allergens": [array of strings],\n'
+                '  "dietaryCategories": [array of strings],\n'
+                '  "extractedIngredients": [array of strings] (List all distinct ingredients found in the text)\n'
+                "}\n\n"
+                "---"
+                "### Allowed IDs:\n"
+                "* **Allergens:** `milk`, `eggs`, `fish`, `tree_nuts`, `wheat`, `shellfish`, `peanuts`, `soybeans`, `sesame`\n"
+                "* **Dietary Categories:** `vegan`, `vegetarian`\n\n"
+                "---"
+                "### **CRITICAL EXTRACTION RULES**\n\n"
+                "**1. Dietary Category Rules (Follow Strictly):**\n\n"
+                "* **For `vegetarian`:**\n"
+                "    * **DO NOT** assign `vegetarian` if *any* meat, poultry, fish, or shellfish products are present.\n"
+                "    * **Exclusion list (check carefully):** `anchovies`, `prosciutto`, `bacon`, `ham`, `chicken`, `beef`, `pork`, `fish`, `shrimp`, `crab`, `lobster`, `gelatin`, `chicken broth`, `beef stock`, `fish sauce`, `lard`.\n\n"
+                "* **For `vegan`:**\n"
+                "    * **DO NOT** assign `vegan` if *any* animal-derived products are present.\n"
+                "    * This includes all items on the `vegetarian` exclusion list, **PLUS:** `milk`, `cheese`, `butter`, `cream`, `yogurt`, `eggs`, `honey`, `whey`, `casein`, `collagen`.\n"
+                '    * If an item qualifies as `vegan`, it *also* qualifies as `vegetarian`. In this case, the output array must be `["vegan", "vegetarian"]`.\n\n'
+                "**2. Allergen Rules (Follow Strictly):**\n\n"
+                "* **`wheat` (Inference Rule):**\n"
+                "    * **YOU MUST** assume `wheat` is present if the ingredients list `pasta`, `flour`, `bread`, `semolina`, `couscous`, `farro`, `spelt`, or `noodles`.\n"
+                "    * **Exception:** Do *not* assign `wheat` only if the item is explicitly qualified as non-wheat (e.g., `gluten-free pasta`, `rice flour`, `almond flour`, `rice noodles`).\n\n"
+                "* **`fish`:**\n"
+                "    * Must be included for all types of fish, including `anchovies`.\n\n"
+                "* **`milk`:**\n"
+                "    * Must be included for `milk` and all common dairy products like `cheese`, `butter`, `yogurt`, `cream`, `whey`, `casein`.\n\n"
+                "**3. General Rules:**\n"
+                "* Normalize all synonyms to the allowed IDs (e.g., 'soya' -> 'soybeans', 'pecans' -> 'tree_nuts', 'parmesan' -> 'milk').\n"
+                "* If no attributes for a category are found, output an empty array `[]` for that key.\n\n"
+                "---"
+                f"Text to analyze: {ai_parse_request.ingredients}"
             )
-            ai_resp = model_local.generate_content(ing_prompt)
+            ai_resp = model_local.generate_content(
+                ing_prompt,
+                request_options=RequestOptions(
+                    retry=retry.Retry(initial=10, multiplier=2, maximum=60, timeout=300)
+                ),
+            )
             ai_raw = ai_resp.text or "{}"
             try:
                 ai_parsed = json.loads(ai_raw)
