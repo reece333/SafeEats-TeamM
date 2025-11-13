@@ -55,3 +55,6 @@ yarn-error.log*
 # Firebase
 firebase-debug.log
 .firebase/
+
+# SafeEats local environment files
+backend/.env
