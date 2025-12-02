@@ -337,6 +337,53 @@ async def get_restaurant(restaurant_id: str, token_data: dict = Depends(verify_t
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@router.put("/restaurants/{restaurant_id}")
+async def update_restaurant(
+    restaurant_id: str, restaurant: Restaurant, token_data: dict = Depends(verify_token)
+):
+    """
+    Update basic restaurant information (name, address, phone, cuisine_type).
+    Only the owner of the restaurant or an admin can perform this action.
+    """
+    try:
+        # Extract user ID from token
+        user_id = token_data.get("uid")
+        if not user_id:
+            raise HTTPException(status_code=401, detail="Invalid user token")
+
+        # Check if user is admin
+        is_admin = await check_admin_status(token_data)
+
+        # Load existing restaurant
+        ref = db.reference(f"restaurants/{restaurant_id}")
+        restaurant_data = ref.get()
+
+        if not restaurant_data:
+            raise HTTPException(
+                status_code=404, detail=f"Restaurant {restaurant_id} not found"
+            )
+
+        # Verify ownership or admin status
+        if restaurant_data.get("owner_uid") != user_id and not is_admin:
+            raise HTTPException(
+                status_code=403,
+                detail="You don't have permission to modify this restaurant",
+            )
+
+        # Update allowed fields while preserving owner_uid and any other metadata
+        updated_fields = restaurant.dict()
+        restaurant_data.update(updated_fields)
+
+        ref.set(restaurant_data)
+
+        return {"id": restaurant_id, **restaurant_data}
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"Error updating restaurant: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 # Menu item routes remain largely the same but now check for admin status too
 @router.post("/restaurants/{restaurant_id}/menu")
 async def add_menu_item(

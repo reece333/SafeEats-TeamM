@@ -388,6 +388,29 @@ export const api = {
     }
   },
 
+  updateRestaurant: async (restaurantId, restaurantData) => {
+    try {
+      const response = await httpRequest({
+        method: 'PUT',
+        url: `${BASE_URL}/restaurants/${restaurantId}`,
+        headers: {
+          'Content-Type': 'application/json',
+          'Accept': 'application/json'
+        },
+        data: restaurantData
+      });
+
+      if (response.status !== 200) {
+        throw new Error(response.data?.detail || 'Failed to update restaurant');
+      }
+
+      return response.data;
+    } catch (error) {
+      console.error('Error updating restaurant:', error);
+      throw error;
+    }
+  },
+
   getRestaurants: async () => {
     try {
       const response = await httpRequest({
