@@ -260,4 +260,113 @@ Because `SESSION_TOKENS` is an in‑memory dictionary:
 
 For deeper debugging, inspect backend logs (Uvicorn/FastAPI) and frontend console (browser DevTools) when reproducing issues. 
 
+---
+
+## 8. Troubleshooting appendix (symptoms → causes → fixes)
+
+### 8.1 Backend & environment
+
+- **Symptom:** `ModuleNotFoundError: No module named 'firebase_admin'` on backend startup  
+  - **Likely causes:**
+    - `firebase-admin` not installed in the active Python environment.
+  - **Solutions:**
+    - Activate the correct venv and install:
+      - `cd backend/app`
+      - `python -m pip install firebase-admin`
+    - Confirm `which python` / `python --version` matches what you expect for the service.
+
+- **Symptom:** Logs show “Firebase initialization error: FIREBASE_CREDENTIALS not found in environment”  
+  - **Likely causes:**
+    - `.env` missing from `backend/app`.
+    - `FIREBASE_CREDENTIALS` not set or malformed.
+  - **Solutions:**
+    - Add `.env` to `backend/app` with a valid `FIREBASE_CREDENTIALS` JSON string.
+    - In production, set the env variable via your host’s dashboard instead of `.env`.
+
+- **Symptom:** Backend returns 500 for every request right after deployment  
+  - **Likely causes:**
+    - `DATABASE_URL` isn’t set or points to the wrong Firebase Realtime Database.
+    - Mismatch between service account and database URL (wrong Firebase project).
+  - **Solutions:**
+    - Verify `DATABASE_URL` matches your Firebase project.
+    - Re-download the service account for the correct project and update `FIREBASE_CREDENTIALS`.
+
+### 8.2 Frontend & CORS
+
+- **Symptom:** Frontend login shows “Failed to fetch” and browser console has CORS errors  
+  - **Likely causes:**
+    - Backend not running at the expected URL.
+    - Frontend hosted at a domain not listed in `origins` in `main.py`.
+  - **Solutions:**
+    - Ensure backend is running on `http://127.0.0.1:8000` in dev.
+    - Access frontend via `http://localhost:3000` (not 127.0.0.1) unless you add `http://127.0.0.1:3000` to `origins`.
+    - In production, add the actual frontend domain to the CORS `origins` list in `main.py` and redeploy.
+
+- **Symptom:** Frontend appears but all API calls hit the Render backend instead of local  
+  - **Likely causes:**
+    - `window.location.hostname` is not `localhost`, so `api.js` uses the deployed backend URL.
+  - **Solutions:**
+    - In dev, always use `http://localhost:3000`.
+    - If you must use another hostname, adjust `getBaseUrl()` in `frontend/src/services/api.js`.
+
+### 8.3 Auth & sessions
+
+- **Symptom:** Users suddenly get 401 on all requests after a backend restart  
+  - **Likely causes:**
+    - In-memory `SESSION_TOKENS` map was cleared when the process restarted.
+  - **Solutions:**
+    - Have users log in again; new tokens will be issued.
+    - For more durable sessions, consider backing tokens with Redis or a database (future enhancement).
+
+- **Symptom:** Admin changes (make/remove admin) don’t appear to take effect in UI  
+  - **Likely causes:**
+    - User still has an old session token where `is_admin` flag hasn’t been updated.
+  - **Solutions:**
+    - Ask the affected user to log out and log back in.
+    - Alternatively, restart the backend to clear all sessions, then have users log in again.
+
+- **Symptom:** `/auth/login` returns 401 “Invalid email or password” for a known user  
+  - **Likely causes:**
+    - Firebase Auth user doesn’t exist (account was deleted).
+    - Typo in email, or you are pointed at the wrong Firebase project.
+  - **Solutions:**
+    - Confirm user exists in Firebase Auth for the same project as `FIREBASE_CREDENTIALS`.
+    - Verify that the frontend is posting to the expected backend (local vs production).
+
+### 8.4 AI parsing & uploads
+
+- **Symptom:** `/ai/parse-ingredients` or `/ai/ingest-menu` return 500 “Failed to parse/ingest”  
+  - **Likely causes:**
+    - `GOOGLE_AI_API_KEY` missing or invalid.
+    - Model name not available (bad `GEMINI_MODEL` or API key doesn’t have access).
+  - **Solutions:**
+    - Confirm `GOOGLE_AI_API_KEY` is set and active in the Google Cloud project.
+    - Remove or correct `GEMINI_MODEL` so the backend can discover supported models.
+
+- **Symptom:** AI endpoints return 504 with `{"error": "upstream_timeout"}`  
+  - **Likely causes:**
+    - Google Generative AI request timed out due to model slowness or large input.
+  - **Solutions:**
+    - Encourage staff to paste shorter ingredient lists.
+    - For large PDFs, try splitting into smaller pages.
+    - Treat 504 as a soft failure and rely on manual allergen toggling.
+
+### 8.5 Data & restaurant/menu management
+
+- **Symptom:** Owner cannot see their restaurant after creating it  
+  - **Likely causes:**
+    - `owner_uid` not set correctly in the restaurant record.
+    - User created restaurant before auth token was fully established.
+  - **Solutions:**
+    - Check Realtime DB under `restaurants/{id}` for `owner_uid` and `users/{uid}` for `restaurant_id`.
+    - If necessary, manually set `owner_uid` and/or `restaurant_id` in Firebase and have the user log out and in again.
+
+- **Symptom:** Staff see 403 when trying to edit menu items for a restaurant  
+  - **Likely causes:**
+    - Their token’s `uid` does not match the restaurant’s `owner_uid`, and they are not admin.
+  - **Solutions:**
+    - Promote them to admin using `/auth/make-admin-by-email`, or ensure they log in as the correct owner account.
+    - Confirm `owner_uid` in `restaurants/{id}` is correct.
+
+
 
