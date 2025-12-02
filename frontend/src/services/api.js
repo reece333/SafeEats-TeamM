@@ -388,6 +388,29 @@ export const api = {
     }
   },
 
+  updateRestaurant: async (restaurantId, restaurantData) => {
+    try {
+      const response = await httpRequest({
+        method: 'PUT',
+        url: `${BASE_URL}/restaurants/${restaurantId}`,
+        headers: {
+          'Content-Type': 'application/json',
+          'Accept': 'application/json'
+        },
+        data: restaurantData
+      });
+
+      if (response.status !== 200) {
+        throw new Error(response.data?.detail || 'Failed to update restaurant');
+      }
+
+      return response.data;
+    } catch (error) {
+      console.error('Error updating restaurant:', error);
+      throw error;
+    }
+  },
+
   getRestaurants: async () => {
     try {
       const response = await httpRequest({
@@ -492,37 +515,6 @@ export const api = {
       return response.data;
     } catch (error) {
       console.error('AI parsing error:', error);
-      throw error;
-    }
-  },
-
-  ingestMenuImage: async (file) => {
-    try {
-      const formData = new FormData();
-      formData.append('file', file);
-
-      const token = getAuthToken();
-      const headers = {
-        'Accept': 'application/json'
-      };
-      if (token) headers['Authorization'] = `Bearer ${token}`;
-
-      // CapacitorHttp doesn't support FormData directly for multipart
-      // So we use fetch here for multipart uploads
-      const response = await fetch(`${BASE_URL}/ai/ingest-menu`, {
-        method: 'POST',
-        headers,
-        body: formData
-      });
-
-      if (!response.ok) {
-        const err = await response.json().catch(() => ({}));
-        throw new Error(err?.detail || 'Failed to ingest menu image');
-      }
-
-      return await response.json();
-    } catch (error) {
-      console.error('Ingest menu image error:', error);
       throw error;
     }
   },
