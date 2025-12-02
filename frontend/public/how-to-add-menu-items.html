@@ -1,0 +1,248 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>SafeEats – How Do I Add Menu Items?</title>
+    <style>
+      :root {
+        --fg: #0f172a;
+        --muted: #475569;
+        --brand: #0ea5e9;
+        --accent: #8DB670;
+        --bg: #ffffff;
+        --card: #f8fafc;
+        --border: #e2e8f0;
+      }
+      html, body {
+        margin: 0;
+        padding: 0;
+        background: var(--bg);
+        color: var(--fg);
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Inter, "Helvetica Neue", Arial, "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol", sans-serif;
+        line-height: 1.55;
+      }
+      .container {
+        max-width: 860px;
+        margin: 0 auto;
+        padding: 32px 20px 64px;
+      }
+      header {
+        margin-bottom: 24px;
+      }
+      h1 {
+        font-size: 1.875rem;
+        margin: 0 0 4px 0;
+        letter-spacing: -0.01em;
+      }
+      .subtitle {
+        color: var(--muted);
+        margin: 0 0 24px 0;
+      }
+      h2 {
+        font-size: 1.25rem;
+        margin-top: 28px;
+        margin-bottom: 10px;
+      }
+      h3 {
+        font-size: 1.05rem;
+        margin-top: 18px;
+        margin-bottom: 6px;
+      }
+      p {
+        margin: 8px 0;
+      }
+      ul, ol {
+        margin: 6px 0 14px 24px;
+      }
+      .card {
+        background: var(--card);
+        border: 1px solid var(--border);
+        border-radius: 12px;
+        padding: 16px 18px;
+        margin: 16px 0;
+      }
+      .step-badge {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 22px;
+        height: 22px;
+        border-radius: 999px;
+        background: var(--accent);
+        color: #ffffff;
+        font-size: 0.8rem;
+        margin-right: 6px;
+      }
+      .hint {
+        font-size: 0.85rem;
+        color: var(--muted);
+      }
+      .links a {
+        color: var(--brand);
+        text-decoration: none;
+      }
+      .links a:hover {
+        text-decoration: underline;
+      }
+      footer {
+        margin-top: 40px;
+        font-size: 0.9rem;
+        color: var(--muted);
+      }
+      .kbd {
+        padding: 1px 6px;
+        border-radius: 4px;
+        border: 1px solid var(--border);
+        background: #e5e7eb;
+        font-size: 0.8rem;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="container">
+      <header>
+        <h1>How Do I Add Menu Items?</h1>
+        <p class="subtitle">
+          This guide is for restaurant staff and menu editors who use SafeEats to keep menu items and allergen tags up to date.
+        </p>
+      </header>
+
+      <section class="card">
+        <h2>Quick overview</h2>
+        <p>
+          In SafeEats, you can add items one by one, or upload a menu and edit the generated items. For each item you’ll:
+        </p>
+        <ul>
+          <li>Fill in name, description, and price.</li>
+          <li>Optionally paste an ingredients list and use <strong>Parse with AI</strong>.</li>
+          <li>Confirm or adjust allergen and dietary checkboxes.</li>
+          <li>Save your changes so they appear on the restaurant dashboard.</li>
+        </ul>
+      </section>
+
+      <section>
+        <h2>Option 1 – Add items manually</h2>
+        <ol>
+          <li>
+            <span class="step-badge">1</span>
+            From the dashboard, click <span class="kbd">Create New Items</span>.
+          </li>
+          <li>
+            <span class="step-badge">2</span>
+            On the menu page, use the form labeled <strong>Menu Item #1</strong>:
+            <ul>
+              <li><strong>Item Name*</strong>: short, clear name customers see.</li>
+              <li><strong>Description*</strong>: a one‑to‑two line description of the dish.</li>
+              <li><strong>Price*</strong>: type numbers only – it will be formatted as <code>$12.99</code>.</li>
+            </ul>
+          </li>
+          <li>
+            <span class="step-badge">3</span>
+            In the <strong>Ingredients</strong> box, you can paste the ingredient list from a label or recipe (optional).
+          </li>
+          <li>
+            <span class="step-badge">4</span>
+            Use the <strong>Dietary Options</strong> and <strong>Allergens</strong> checkboxes to mark the item correctly.
+          </li>
+          <li>
+            <span class="step-badge">5</span>
+            Click the appropriate save button (for your view) to send items to the backend.
+          </li>
+        </ol>
+        <p class="hint">
+          You can add multiple items at once using multiple forms before saving them.
+        </p>
+      </section>
+
+      <section>
+        <h2>Option 2 – Upload a menu file</h2>
+        <ol>
+          <li>
+            <span class="step-badge">1</span>
+            From the restaurant dashboard, click <span class="kbd">Create New Items</span>.
+          </li>
+          <li>
+            <span class="step-badge">2</span>
+            Look for the upload control and choose a PNG, JPEG, or PDF of your menu.
+          </li>
+          <li>
+            <span class="step-badge">3</span>
+            Wait for “Extracting items…” to finish. SafeEats will create a form for each detected menu item.
+          </li>
+          <li>
+            <span class="step-badge">4</span>
+            Go through each generated item to fix names, descriptions, and prices where needed.
+          </li>
+        </ol>
+        <p class="hint">
+          Always review items after an upload – the AI may miss special formatting or unusual menu layouts.
+        </p>
+      </section>
+
+      <section>
+        <h2>Using “Parse with AI” on ingredients</h2>
+        <ol>
+          <li>
+            <span class="step-badge">1</span>
+            Paste the ingredient list into the <strong>Ingredients</strong> box (for example:
+            <em>milk, eggs, wheat flour, butter</em>).
+          </li>
+          <li>
+            <span class="step-badge">2</span>
+            Click <strong>Parse with AI</strong>.
+          </li>
+          <li>
+            <span class="step-badge">3</span>
+            SafeEats will:
+            <ul>
+              <li>Highlight <strong>Parsed allergens</strong> just under the button.</li>
+              <li>Update the allergen and dietary checkboxes below the form.</li>
+            </ul>
+          </li>
+          <li>
+            <span class="step-badge">4</span>
+            Double‑check the suggestions. If anything looks wrong, simply toggle the checkboxes manually.
+          </li>
+        </ol>
+        <div class="card">
+          <strong>Tip:</strong> If parsing fails, you’ll see a message like
+          “Could not parse ingredients. Please check the text and try again, or set allergens manually.”
+          You can always fall back to manual checkboxes.
+        </div>
+      </section>
+
+      <section>
+        <h2>Saving and confirming items</h2>
+        <ul>
+          <li>When you’re done editing a row, use the provided Save/Update controls to commit that item.</li>
+          <li>For bulk imports, use the “Add All Items” action (if available) to send multiple items at once.</li>
+          <li>Return to the restaurant dashboard to confirm the items appear as expected.</li>
+        </ul>
+      </section>
+
+      <section>
+        <h2>Common issues</h2>
+        <ul>
+          <li>
+            <strong>Price looks wrong:</strong> make sure you’re typing only digits (e.g., <code>1299</code> for $12.99);
+            the field will format it automatically.
+          </li>
+          <li>
+            <strong>AI says “None detected” but you see allergens:</strong> toggle the correct allergen boxes manually
+            (for example, turn on Milk, Eggs, Wheat).
+          </li>
+          <li>
+            <strong>Upload shows strange items:</strong> delete incorrect rows and add those dishes manually instead.
+          </li>
+        </ul>
+      </section>
+
+      <footer>
+        SafeEats – Staff Help. For questions about roles or permissions, contact your restaurant owner or system administrator.
+      </footer>
+    </div>
+  </body>
+  </html>
+
+
