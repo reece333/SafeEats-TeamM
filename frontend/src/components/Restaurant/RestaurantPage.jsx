@@ -402,7 +402,19 @@ const RestaurantPage = () => {
               </svg>
             </button>
             
-            <h2 className="text-2xl font-bold mb-4">{restaurant.name}</h2>
+            <h2 className="text-2xl font-bold mb-2">{restaurant.name}</h2>
+            <p className="text-sm text-gray-600 mb-4">
+              New to SafeEats?{" "}
+              <a
+                href="/owners-quick-start.html"
+                target="_blank"
+                rel="noreferrer"
+                className="text-[#0ea5e9] hover:underline font-medium"
+              >
+                Open the Owner Quick-Start guide
+              </a>
+              {" "}for a short walkthrough.
+            </p>
             
             <div className="grid grid-cols-1 md:grid-cols-2 gap-2 text-sm text-gray-600">
               <div>
