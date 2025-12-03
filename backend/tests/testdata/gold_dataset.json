@@ -1,0 +1,513 @@
+[
+  {
+    "name": "Synonym - Whey",
+    "input": "Whey Protein Isolate, Salt, Natural Flavors.",
+    "expected": {
+      "ingredients_normalized": [
+        "whey protein isolate",
+        "salt",
+        "natural flavors"
+      ],
+      "allergens": ["milk"],
+      "notes": []
+    }
+  },
+  {
+    "name": "Synonym - Caseinate",
+    "input": "Contains: Sodium Caseinate.",
+    "expected": {
+      "ingredients_normalized": ["sodium caseinate"],
+      "allergens": ["milk"],
+      "notes": []
+    }
+  },
+  {
+    "name": "Synonym - Butter and Cream",
+    "input": "Enriched Flour (Wheat Flour), Butter (Cream, Salt).",
+    "expected": {
+      "ingredients_normalized": [
+        "enriched flour (wheat flour)",
+        "butter (cream, salt)"
+      ],
+      "allergens": ["wheat", "milk"],
+      "notes": []
+    }
+  },
+  {
+    "name": "Synonym - Albumin",
+    "input": "Albumin (Egg), Water, Sugar.",
+    "expected": {
+      "ingredients_normalized": ["albumin (egg)", "water", "sugar"],
+      "allergens": ["eggs"],
+      "notes": []
+    }
+  },
+  {
+    "name": "Synonym - Egg Yolk",
+    "input": "Mayonnaise (Vegetable Oil, Egg Yolk, Vinegar).",
+    "expected": {
+      "ingredients_normalized": [
+        "mayonnaise (vegetable oil, egg yolk, vinegar)"
+      ],
+      "allergens": ["eggs"],
+      "notes": []
+    }
+  },
+  {
+    "name": "Synonym - Soy Lecithin",
+    "input": "Chocolate (Sugar, Cocoa Butter, Soy Lecithin, Vanilla).",
+    "expected": {
+      "ingredients_normalized": [
+        "chocolate (sugar, cocoa butter, soy lecithin, vanilla)"
+      ],
+      "allergens": ["soybeans"],
+      "notes": []
+    }
+  },
+  {
+    "name": "Synonym - Edamame",
+    "input": "Edamame, Salt.",
+    "expected": {
+      "ingredients_normalized": ["edamame", "salt"],
+      "allergens": ["soybeans"],
+      "notes": []
+    }
+  },
+  {
+    "name": "Synonym - Tahini",
+    "input": "Tahini (Ground Sesame Seeds), Water, Garlic.",
+    "expected": {
+      "ingredients_normalized": ["tahini (ground sesame seeds)", "water", "garlic"],
+      "allergens": ["sesame"],
+      "notes": []
+    }
+  },
+  {
+    "name": "Synonym - Semolina",
+    "input": "Pasta (Semolina, Egg).",
+    "expected": {
+      "ingredients_normalized": ["pasta (semolina, egg)"],
+      "allergens": ["wheat", "eggs"],
+      "notes": []
+    }
+  },
+  {
+    "name": "Synonym - Almonds",
+    "input": "Almonds, Sugar, Salt.",
+    "expected": {
+      "ingredients_normalized": ["almonds", "sugar", "salt"],
+      "allergens": ["tree_nuts"],
+      "notes": []
+    }
+  },
+  {
+    "name": "Synonym - Walnuts",
+    "input": "Walnuts, Cranberries.",
+    "expected": {
+      "ingredients_normalized": ["walnuts", "cranberries"],
+      "allergens": ["tree_nuts"],
+      "notes": []
+    }
+  },
+  {
+    "name": "Synonym - Pine Nuts",
+    "input": "Pesto (Basil, Pine Nuts, Parmesan Cheese [Milk]).",
+    "expected": {
+      "ingredients_normalized": [
+        "pesto (basil, pine nuts, parmesan cheese [milk])"
+      ],
+      "allergens": ["tree_nuts", "milk"],
+      "notes": []
+    }
+  },
+  {
+    "name": "Synonym - Peanuts",
+    "input": "Peanut Butter (Peanuts, Salt).",
+    "expected": {
+      "ingredients_normalized": ["peanut butter (peanuts, salt)"],
+      "allergens": ["peanuts"],
+      "notes": []
+    }
+  },
+  {
+    "name": "Synonym - Fish",
+    "input": "Cod, Batter (Flour).",
+    "expected": {
+      "ingredients_normalized": ["cod", "batter (flour)"],
+      "allergens": ["fish", "wheat"],
+      "notes": []
+    }
+  },
+  {
+    "name": "Synonym - Shellfish",
+    "input": "Shrimp, Salt, Spices.",
+    "expected": {
+      "ingredients_normalized": ["shrimp", "salt", "spices"],
+      "allergens": ["shellfish"],
+      "notes": []
+    }
+  },
+  {
+    "name": "Keyword - CONTAINS (simple)",
+    "input": "CONTAINS: MILK, WHEAT, EGGS.",
+    "expected": {
+      "ingredients_normalized": [],
+      "allergens": ["milk", "wheat", "eggs"],
+      "notes": []
+    }
+  },
+  {
+    "name": "Keyword - Contains (mixed case)",
+    "input": "Ingredients: Water, Sugar. Contains: Soy.",
+    "expected": {
+      "ingredients_normalized": ["water", "sugar"],
+      "allergens": ["soybeans"],
+      "notes": []
+    }
+  },
+  {
+    "name": "Keyword - Allergen Information",
+    "input": "Allergen Information: Contains Wheat, Soy, and Peanuts.",
+    "expected": {
+      "ingredients_normalized": [],
+      "allergens": ["wheat", "soybeans", "peanuts"],
+      "notes": []
+    }
+  },
+  {
+    "name": "Keyword - May Contain (simple)",
+    "input": "May contain peanuts and tree nuts.",
+    "expected": {
+      "ingredients_normalized": [],
+      "allergens": [],
+      "notes": [
+        "possible cross-contact: peanuts",
+        "possible cross-contact: tree_nuts"
+      ]
+    }
+  },
+  {
+    "name": "Keyword - May contain traces",
+    "input": "Ingredients: Wheat Flour, Sugar. May contain traces of milk.",
+    "expected": {
+      "ingredients_normalized": ["wheat flour", "sugar"],
+      "allergens": ["wheat"],
+      "notes": ["possible cross-contact: milk"]
+    }
+  },
+  {
+    "name": "Keyword - Facility (peanuts)",
+    "input": "Manufactured in a facility that also processes peanuts.",
+    "expected": {
+      "ingredients_normalized": [],
+      "allergens": [],
+      "notes": ["possible cross-contact: peanuts"]
+    }
+  },
+  {
+    "name": "Keyword - Facility (complex)",
+    "input": "Processed on equipment that also processes sesame and tree nuts (almonds, walnuts).",
+    "expected": {
+      "ingredients_normalized": [],
+      "allergens": [],
+      "notes": [
+        "possible cross-contact: sesame",
+        "possible cross-contact: tree_nuts"
+      ]
+    }
+  },
+  {
+    "name": "Keyword - Contains AND May Contain",
+    "input": "Contains: Wheat, Milk. May contain eggs.",
+    "expected": {
+      "ingredients_normalized": [],
+      "allergens": ["wheat", "milk"],
+      "notes": ["possible cross-contact: eggs"]
+    }
+  },
+  {
+    "name": "Keyword - Ingredients AND May Contain",
+    "input": "Ingredients: Oats, Sugar. May contain soy.",
+    "expected": {
+      "ingredients_normalized": ["oats", "sugar"],
+      "allergens": [],
+      "notes": ["possible cross-contact: soybeans"]
+    }
+  },
+  {
+    "name": "Formatting - ALL CAPS",
+    "input": "INGREDIENTS: SUGAR, WATER, ENRICHED FLOUR (BLEACHED WHEAT FLOUR), SOYBEAN OIL, EGGS.",
+    "expected": {
+      "ingredients_normalized": [
+        "sugar",
+        "water",
+        "enriched flour (bleached wheat flour)",
+        "soybean oil",
+        "eggs"
+      ],
+      "allergens": ["wheat", "soybeans", "eggs"],
+      "notes": []
+    }
+  },
+  {
+    "name": "Formatting - ALL CAPS Synonyms",
+    "input": "WHOLE GRAIN ROLLED OATS, SUGAR, ALMONDS, WHEY.",
+    "expected": {
+      "ingredients_normalized": [
+        "whole grain rolled oats",
+        "sugar",
+        "almonds",
+        "whey"
+      ],
+      "allergens": ["tree_nuts", "milk"],
+      "notes": []
+    }
+  },
+  {
+    "name": "Formatting - Accents",
+    "input": "PÂTE DE CACAO, SUCRE, BEURRE DE CACAO, LÉCITHINE DE SOJA.",
+    "expected": {
+      "ingredients_normalized": [
+        "pâte de cacao",
+        "sucre",
+        "beurre de cacao",
+        "lécithine de soja"
+      ],
+      "allergens": ["soybeans"],
+      "notes": []
+    }
+  },
+  {
+    "name": "Formatting - Semicolons",
+    "input": "Flour (wheat); Sugar; Eggs; Vanilla.",
+    "expected": {
+      "ingredients_normalized": ["flour (wheat)", "sugar", "eggs", "vanilla"],
+      "allergens": ["wheat", "eggs"],
+      "notes": []
+    }
+  },
+  {
+    "name": "Formatting - Asterisks",
+    "input": "Ingredients: Water, *Soybeans*, Salt. *Contains Soy.",
+    "expected": {
+      "ingredients_normalized": ["water", "soybeans", "salt"],
+      "allergens": ["soybeans"],
+      "notes": []
+    }
+  },
+  {
+    "name": "Formatting - Extra Whitespace",
+    "input": "Water,    Sugar  , Salt,   Eggs",
+    "expected": {
+      "ingredients_normalized": ["water", "sugar", "salt", "eggs"],
+      "allergens": ["eggs"],
+      "notes": []
+    }
+  },
+  {
+    "name": "Formatting - Period at end",
+    "input": "Flour, Water, Salt.",
+    "expected": {
+      "ingredients_normalized": ["flour", "water", "salt"],
+      "allergens": ["wheat"],
+      "notes": []
+    }
+  },
+  {
+    "name": "Structure - Nested Parentheticals",
+    "input": "Pasta (Semolina [Wheat], Egg Yolk).",
+    "expected": {
+      "ingredients_normalized": ["pasta (semolina [wheat], egg yolk)"],
+      "allergens": ["wheat", "eggs"],
+      "notes": []
+    }
+  },
+  {
+    "name": "Structure - Multiple Parentheticals",
+    "input": "Bread (Enriched Flour [Wheat Flour, Niacin], Water), Cheese (Milk, Salt).",
+    "expected": {
+      "ingredients_normalized": [
+        "bread (enriched flour [wheat flour, niacin], water)",
+        "cheese (milk, salt)"
+      ],
+      "allergens": ["wheat", "milk"],
+      "notes": []
+    }
+  },
+  {
+    "name": "Structure - Deeply Nested",
+    "input": "Seasoning (Salt, Spices (Including Paprika), (Garlic Powder), Onion Powder).",
+    "expected": {
+      "ingredients_normalized": [
+        "seasoning (salt, spices (including paprika), (garlic powder), onion powder)"
+      ],
+      "allergens": [],
+      "notes": []
+    }
+  },
+  {
+    "name": "Structure - Informational Parentheticals",
+    "input": "Dark Chocolate (Cocoa, Sugar, Soy Lecithin (an emulsifier)).",
+    "expected": {
+      "ingredients_normalized": [
+        "dark chocolate (cocoa, sugar, soy lecithin (an emulsifier))"
+      ],
+      "allergens": ["soybeans"],
+      "notes": []
+    }
+  },
+  {
+    "name": "Structure - Flour Policy",
+    "input": "Flour (for dusting), Water.",
+    "expected": {
+      "ingredients_normalized": ["flour (for dusting)", "water"],
+      "allergens": ["wheat"],
+      "notes": []
+    }
+  },
+  {
+    "name": "Ambiguity - Spices",
+    "input": "Water, Sugar, Spices, Natural Flavor.",
+    "expected": {
+      "ingredients_normalized": [
+        "water",
+        "sugar",
+        "spices",
+        "natural flavor"
+      ],
+      "allergens": [],
+      "notes": []
+    }
+  },
+  {
+    "name": "Ambiguity - Natural Flavors",
+    "input": "Potatoes, Salt, Seasoning (Salt, Sugar, Natural Flavors).",
+    "expected": {
+      "ingredients_normalized": [
+        "potatoes",
+        "salt",
+        "seasoning (salt, sugar, natural flavors)"
+      ],
+      "allergens": [],
+      "notes": []
+    }
+  },
+  {
+    "name": "Ambiguity - Spices and *Invalid* Allergen",
+    "input": "Spices (including Mustard), Salt. Contains: Mustard.",
+    "expected": {
+      "ingredients_normalized": ["spices (including mustard)", "salt"],
+      "allergens": [],
+      "notes": []
+    }
+  },
+  {
+    "name": "Edge Case - Empty String",
+    "input": "",
+    "expected": {
+      "ingredients_normalized": [],
+      "allergens": [],
+      "notes": []
+    }
+  },
+  {
+    "name": "Edge Case - Whitespace Only",
+    "input": "     ",
+    "expected": {
+      "ingredients_normalized": [],
+      "allergens": [],
+      "notes": []
+    }
+  },
+  {
+    "name": "Synonym - gluten",
+    "input": "Contains: Gluten.",
+    "expected": {
+      "ingredients_normalized": [],
+      "allergens": ["wheat"],
+      "notes": []
+    }
+  },
+  {
+    "name": "Edge Case - 'Ingredients' keyword only",
+    "input": "Ingredients:",
+    "expected": {
+      "ingredients_normalized": [],
+      "allergens": [],
+      "notes": []
+    }
+  },
+  {
+    "name": "Synonym - treenuts",
+    "input": "May contain treenuts.",
+    "expected": {
+      "ingredients_normalized": [],
+      "allergens": [],
+      "notes": ["possible cross-contact: tree_nuts"]
+    }
+  },
+  {
+    "name": "Edge Case - No clear delimiters",
+    "input": "Flour Water Salt Yeast",
+    "expected": {
+      "ingredients_normalized": ["flour water salt yeast"],
+      "allergens": ["wheat"],
+      "notes": []
+    }
+  },
+  {
+    "name": "Policy - Flour (default to wheat)",
+    "input": "Flour, Water, Salt.",
+    "expected": {
+      "ingredients_normalized": ["flour", "water", "salt"],
+      "allergens": ["wheat"],
+      "notes": []
+    }
+  },
+  {
+    "name": "Policy - Complex Mix",
+    "input": "Sauce (Tomatoes, Onions, Garlic, Spices), Meatballs (Beef, Breadcrumbs [Wheat], Egg, Parmesan [Milk]). May contain traces of soy.",
+    "expected": {
+      "ingredients_normalized": [
+        "sauce (tomatoes, onions, garlic, spices)",
+        "meatballs (beef, breadcrumbs [wheat], egg, parmesan [milk])"
+      ],
+      "allergens": ["wheat", "eggs", "milk"],
+      "notes": ["possible cross-contact: soybeans"]
+    }
+  },
+  {
+    "name": "Policy - No Allergens",
+    "input": "Water, Sugar, Salt, Citric Acid, Natural Flavors.",
+    "expected": {
+      "ingredients_normalized": [
+        "water",
+        "sugar",
+        "salt",
+        "citric acid",
+        "natural flavors"
+      ],
+      "allergens": [],
+      "notes": []
+    }
+  },
+  {
+    "name": "Policy - All Allergens (Updated)",
+    "input": "Contains: Milk, Eggs, Peanuts, Tree Nuts (Almonds, Walnuts), Soy, Wheat, Fish (Cod), Shellfish (Shrimp), Sesame.",
+    "expected": {
+      "ingredients_normalized": [],
+      "allergens": [
+        "milk",
+        "eggs",
+        "peanuts",
+        "tree_nuts",
+        "soybeans",
+        "wheat",
+        "fish",
+        "shellfish",
+        "sesame"
+      ],
+      "notes": []
+    }
+  }
+]
