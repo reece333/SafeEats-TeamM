@@ -519,6 +519,38 @@ export const api = {
     }
   },
 
+  // Menu image ingestion
+  ingestMenuImage: async (file) => {
+    try {
+      const formData = new FormData();
+      formData.append('file', file);
+
+      const token = getAuthToken();
+      if (!token) {
+        throw new Error('Authentication required');
+      }
+
+      const response = await fetch(`${BASE_URL}/ai/ingest-menu`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${token}`
+        },
+        body: formData
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData?.detail || 'Failed to ingest menu image');
+      }
+
+      const data = await response.json();
+      return data;
+    } catch (error) {
+      console.error('Menu ingestion error:', error);
+      throw error;
+    }
+  },
+
   removeUserAdmin: async (email) => {
     try {
       const response = await httpRequest({

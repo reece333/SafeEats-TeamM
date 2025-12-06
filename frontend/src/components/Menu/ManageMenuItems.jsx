@@ -163,7 +163,7 @@ const ManageMenuItems = () => {
 
     // Convert object to array and filter out any undefined values
     const itemsToAdd = Object.values(menuItemsData).filter(item => 
-      item && item.name && item.price // Basic validation
+      item && item.name && (item.price !== null && item.price !== undefined) // Basic validation - allow price 0
     );
 
     if (itemsToAdd.length === 0) {
