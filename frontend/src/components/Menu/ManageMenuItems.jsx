@@ -9,6 +9,8 @@ const ManageMenuItems = () => {
   const [menuItemsData, setMenuItemsData] = useState({}); // Use an object with form indices as keys
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [ingestedItems, setIngestedItems] = useState([]);
+  const [isIngesting, setIsIngesting] = useState(false);
   const [showConfirmDialog, setShowConfirmDialog] = useState(false);
   const [itemToDelete, setItemToDelete] = useState(null);
   const { restaurantId } = useParams(); // Get restaurantId from URL
@@ -59,6 +61,45 @@ const ManageMenuItems = () => {
     const newFormIndex = menuForms.length > 0 ? Math.max(...menuForms) + 1 : 0;
     setMenuForms([...menuForms, newFormIndex]);
     shouldScrollToNew.current = true;
+  };
+
+  const handleIngestFile = async (evt) => {
+    const file = evt.target.files && evt.target.files[0];
+    if (!file) return;
+    setError('');
+    setIsIngesting(true);
+    try {
+      const result = await api.ingestMenuImage(file);
+      const items = (result && result.items) || [];
+      setIngestedItems(items);
+      // Insert rows into forms for quick editing
+      const baseIndex = menuForms.length > 0 ? Math.max(...menuForms) + 1 : 0;
+      const newIndices = items.map((_, i) => baseIndex + i);
+      setMenuForms(prev => [...prev, ...newIndices]);
+      // Seed form data
+      setMenuItemsData(prev => {
+        const next = { ...prev };
+        newIndices.forEach((idx, i) => {
+          const it = items[i] || {};
+          next[idx] = {
+            name: it.name || '',
+            description: it.description || '',
+            price: it.price || 0,
+            priceNumeric: typeof it.price === 'number' ? it.price : 0,
+            allergens: it.allergens || [],
+            dietaryCategories: it.dietaryCategories || [],
+            ingredients: it.ingredients || ''
+          };
+        });
+        return next;
+      });
+    } catch (e) {
+      setError(e?.message || 'Failed to ingest image');
+    } finally {
+      setIsIngesting(false);
+      // reset file input value to allow re-uploading same file
+      evt.target.value = '';
+    }
   };
 
   useEffect(() => {
@@ -122,7 +163,7 @@ const ManageMenuItems = () => {
 
     // Convert object to array and filter out any undefined values
     const itemsToAdd = Object.values(menuItemsData).filter(item => 
-      item && item.name && item.price // Basic validation
+      item && item.name && (item.price !== null && item.price !== undefined) // Basic validation - allow price 0
     );
 
     if (itemsToAdd.length === 0) {
@@ -185,6 +226,21 @@ const ManageMenuItems = () => {
       )}
 
       <div className='flex flex-col justify-center items-center'>
+        <div className="w-[55%] mb-6 flex flex-col items-center">
+          <button
+              onClick={() => document.getElementById('file-upload').click()}
+              className="block w-full max-w-96 text-center bg-[#8DB670] rounded-xl pt-4 pb-4 font-semibold text-white mt-2 hover:bg-[#6c8b55] disabled:bg-gray-400"
+            >
+              Import Menu (PNG/JPEG/PDF)
+            </button>
+          <input id="file-upload" type="file" accept="image/png, image/jpeg, application/pdf" onChange={handleIngestFile} className="hidden"/>
+          {isIngesting && (
+            <div className="text-sm text-gray-600 mt-2">Extracting items...</div>
+          )}
+          {ingestedItems.length > 0 && (
+            <div className="text-sm text-gray-700 mt-2">Imported {ingestedItems.length} items. Review and edit below, then click "Add All Items".</div>
+          )}
+        </div>
         {menuForms.map((formIndex, arrayIndex) => (
           <div
             key={formIndex}
@@ -209,7 +265,7 @@ const ManageMenuItems = () => {
             >
               <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#ffffff" strokeWidth="5" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
           </button>
-          <div className='flex flex-col justify-center items-center gap-6 mt-10'>
+          <div className='clear-right flex flex-col justify-center items-center gap-6 mt-10'>
             <button
               onClick={handleAddAllItems}
               disabled={loading}

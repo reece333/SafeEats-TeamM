@@ -646,7 +646,7 @@
     "react-is": "^17.0.2",
     "react-refresh": "^0.11.0",
     "react-router": "^7.1.5",
-    "react-router-dom": "^7.1.5",
+    "react-router-dom": "^7.9.5",
     "react-scripts": "^5.0.1",
     "react-transition-group": "^4.4.5",
     "read-cache": "^1.0.0",
@@ -870,9 +870,29 @@
     "yocto-queue": "^0.1.0"
   },
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1",
     "start": "react-scripts start",
-    "build": "DISABLE_ESLINT_PLUGIN=true react-scripts build"
+    "build": "react-scripts build",
+    "test": "react-scripts test",
+    "eject": "react-scripts eject",
+    "e2e": "playwright test"
+  },
+  "eslintConfig": {
+    "extends": [
+      "react-app",
+      "react-app/jest"
+    ]
+  },
+  "browserslist": {
+    "production": [
+      ">0.2%",
+      "not dead",
+      "not op_mini all"
+    ],
+    "development": [
+      "last 1 chrome version",
+      "last 1 firefox version",
+      "last 1 safari version"
+    ]
   },
   "author": "",
   "license": "ISC",
@@ -881,6 +901,10 @@
     "@babel/core": "^7.26.10",
     "@babel/eslint-parser": "^7.27.0",
     "@babel/plugin-proposal-private-property-in-object": "^7.21.11",
+    "@playwright/test": "^1.56.1",
+    "@testing-library/jest-dom": "^6.9.1",
+    "@testing-library/react": "^16.3.0",
+    "@testing-library/user-event": "^14.6.1",
     "eslint": "^8.57.1",
     "eslint-config-react-app": "^7.0.1",
     "eslint-plugin-import": "^2.31.0",

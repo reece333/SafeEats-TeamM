@@ -186,7 +186,8 @@ const MenuItemForm = ({ formIndex, onRemove, onFormChange, initialData = {}, res
         ingredients: extractedIngredients && extractedIngredients.length > 0 ? extractedIngredients.join(', ') : prev.ingredients
       }));
     } catch (e) {
-      setParseError(e?.message || 'Failed to parse ingredients');
+      console.error('AI ingredient parsing error:', e);
+      setParseError('Could not parse ingredients. Please check the text and try again, or set allergens manually.');
     }
   };
 
@@ -233,28 +234,45 @@ const MenuItemForm = ({ formIndex, onRemove, onFormChange, initialData = {}, res
         <div>
           <div className='flex items-start'>
             <label className='block font-medium text-lg whitespace-nowrap mr-6'>Ingredients</label>
-            <textarea
-              placeholder="Enter ingredients separated by commas"
-              value={formData.ingredients}
-              onChange={(e) => handleChange('ingredients', e.target.value)}
-              className="w-4/5 px-3 py-2 border border-gray-300 rounded-md ml-auto"
-            />
+            <div className="w-4/5 ml-auto">
+              <textarea
+                placeholder="Paste ingredients from a label or menu (e.g., milk, eggs, wheat)"
+                value={formData.ingredients}
+                onChange={(e) => handleChange('ingredients', e.target.value)}
+                className="w-full px-3 py-2 border border-gray-300 rounded-md"
+              />
+              <p className="mt-1 text-xs text-gray-500">
+                SafeEats uses this list to suggest allergens and dietary tags. You can still adjust them manually.
+              </p>
+            </div>
           </div>
           
-          <button
-            type="button"
-            className={`mt-2 py-1 px-4 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 ${formData.ingredients.trim() ? "bg-gray-200 text-gray-800 hover:bg-gray-300" : "bg-gray-100 text-gray-400 cursor-not-allowed"}`}
-            onClick={parseIngredients}
-            disabled={!formData.ingredients.trim()}
-          >
-            Parse
-          </button>
+          <div className="flex items-center mt-2 space-x-3">
+            <button
+              type="button"
+              className={`py-1 px-4 rounded-md text-sm font-medium focus:outline-none focus:ring-2 focus:ring-blue-500 ${
+                formData.ingredients.trim()
+                  ? "bg-gray-200 text-gray-800 hover:bg-gray-300"
+                  : "bg-gray-100 text-gray-400 cursor-not-allowed"
+              }`}
+              onClick={parseIngredients}
+              disabled={!formData.ingredients.trim()}
+            >
+              Parse with AI
+            </button>
+            <p className="text-xs text-gray-500">
+              Scans the ingredients and updates the allergen and dietary checkboxes below.
+            </p>
+          </div>
+
           <div className="mt-2 text-sm">
             {parseError ? (
-              <span className="text-red-600">{parseError}</span>
+              <span className="text-red-600">
+                {parseError}
+              </span>
             ) : (
               <div>
-                <span>Parsed allergens: </span>
+                <span className="text-gray-700">Parsed allergens: </span>
                 {parsedAllergens.length > 0 ? (
                   <span className="font-medium">
                     {parsedAllergens.map(id => {
@@ -263,7 +281,9 @@ const MenuItemForm = ({ formIndex, onRemove, onFormChange, initialData = {}, res
                     })}
                   </span>
                 ) : (
-                  <span className="text-gray-500">None detected</span>
+                  <span className="text-gray-500">
+                    None detected yet — you can still toggle allergens manually.
+                  </span>
                 )}
               </div>
             )}

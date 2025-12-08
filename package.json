@@ -1,46 +1,16 @@
 {
-  "name": "frontend",
-  "version": "0.1.0",
+  "name": "safe-eats-parsing",
+  "version": "1.0.0",
+  "description": "SafeEats restaurant web application",
   "private": true,
-  "dependencies": {
-    "@capacitor/cli": "^7.0.1",
-    "@capacitor/core": "^7.0.1",
-    "@capacitor/toast": "^7.0.0",
-    "@emotion/react": "^11.14.0",
-    "@emotion/styled": "^11.14.0",
-    "@mui/material": "^6.4.3",
-    "@testing-library/jest-dom": "^5.17.0",
-    "@testing-library/react": "^13.4.0",
-    "@testing-library/user-event": "^13.5.0",
-    "axios": "^1.7.9",
-    "react": "^18.2.0",
-    "react-dom": "^18.2.0",
-    "react-router-dom": "^7.1.5",
-    "react-scripts": "5.0.1",
-    "web-vitals": "^2.1.4"
-  },
   "scripts": {
-    "start": "react-scripts start",
-    "build": "react-scripts build",
-    "test": "react-scripts test",
-    "eject": "react-scripts eject"
+    "install:frontend": "cd frontend && npm install",
+    "install:backend": "cd backend && pip install -r requirements.txt",
+    "start:frontend": "cd frontend && npm start",
+    "start:backend": "cd backend/app && uvicorn main:app --reload",
+    "dev": "concurrently \"npm run start:backend\" \"npm run start:frontend\""
   },
-  "eslintConfig": {
-    "extends": [
-      "react-app",
-      "react-app/jest"
-    ]
-  },
-  "browserslist": {
-    "production": [
-      ">0.2%",
-      "not dead",
-      "not op_mini all"
-    ],
-    "development": [
-      "last 1 chrome version",
-      "last 1 firefox version",
-      "last 1 safari version"
-    ]
+  "devDependencies": {
+    "concurrently": "^7.6.0"
   }
 }

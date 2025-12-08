@@ -402,7 +402,19 @@ const RestaurantPage = () => {
               </svg>
             </button>
             
-            <h2 className="text-2xl font-bold mb-4">{restaurant.name}</h2>
+            <h2 className="text-2xl font-bold mb-2">{restaurant.name}</h2>
+            <p className="text-sm text-gray-600 mb-4">
+              New to SafeEats?{" "}
+              <a
+                href="/owners-quick-start.html"
+                target="_blank"
+                rel="noreferrer"
+                className="text-[#0ea5e9] hover:underline font-medium"
+              >
+                Open the Owner Quick-Start guide
+              </a>
+              {" "}for a short walkthrough.
+            </p>
             
             <div className="grid grid-cols-1 md:grid-cols-2 gap-2 text-sm text-gray-600">
               <div>
@@ -426,7 +438,17 @@ const RestaurantPage = () => {
 
       {/* Menu Items Section */}
       <div className="w-full bg-white rounded-xl shadow-md p-6 mb-6">
-        <h3 className="text-2xl font-semibold mb-6 text-center">Menu Items</h3>
+        <div className="flex flex-col md:flex-row md:items-center md:justify-between mb-6 gap-2">
+          <h3 className="text-2xl font-semibold text-center md:text-left">Menu Items</h3>
+          <a
+            href="/how-to-add-menu-items.html"
+            target="_blank"
+            rel="noreferrer"
+            className="text-sm text-[#0ea5e9] hover:underline text-center md:text-right"
+          >
+            Need help adding items? Open “How Do I Add Menu Items?”
+          </a>
+        </div>
         {menuItems.length === 0 ? (
           <div className="text-center py-8">
             <p className="text-gray-500 mb-4">No menu items added yet.</p>

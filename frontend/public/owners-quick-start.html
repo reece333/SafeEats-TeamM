@@ -1,0 +1,208 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>SafeEats – Owner Quick Start</title>
+    <style>
+      :root {
+        --fg: #0f172a;
+        --muted: #475569;
+        --brand: #0ea5e9;
+        --bg: #ffffff;
+        --card: #f8fafc;
+        --border: #e2e8f0;
+      }
+      html, body {
+        margin: 0;
+        padding: 0;
+        background: var(--bg);
+        color: var(--fg);
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Inter, "Helvetica Neue", Arial, "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol", sans-serif;
+        line-height: 1.55;
+      }
+      .container {
+        max-width: 860px;
+        margin: 0 auto;
+        padding: 32px 20px 64px;
+      }
+      header {
+        margin-bottom: 24px;
+      }
+      h1 {
+        font-size: 1.875rem;
+        margin: 0 0 4px 0;
+        letter-spacing: -0.01em;
+      }
+      .subtitle {
+        color: var(--muted);
+        margin: 0 0 24px 0;
+      }
+      h2 {
+        font-size: 1.25rem;
+        margin-top: 28px;
+        margin-bottom: 10px;
+      }
+      h3 {
+        margin-top: 20px;
+        margin-bottom: 8px;
+      }
+      p {
+        margin: 10px 0;
+      }
+      ul, ol {
+        margin: 8px 0 16px 24px;
+      }
+      .card {
+        background: var(--card);
+        border: 1px solid var(--border);
+        border-radius: 12px;
+        padding: 16px 18px;
+        margin: 16px 0;
+      }
+      .inline-kbd {
+        background: #0b1220;
+        color: #e2e8f0;
+        border-radius: 6px;
+        padding: 2px 6px;
+        font-size: 0.84em;
+      }
+      .badge {
+        display: inline-block;
+        padding: 2px 8px;
+        border-radius: 999px;
+        border: 1px solid var(--border);
+        background: #eef6ff;
+        color: #0b5cab;
+        font-size: 0.78rem;
+        margin-left: 8px;
+        vertical-align: middle;
+      }
+      .links a {
+        color: var(--brand);
+        text-decoration: none;
+      }
+      .links a:hover {
+        text-decoration: underline;
+      }
+      footer {
+        margin-top: 40px;
+        font-size: 0.9rem;
+        color: var(--muted);
+      }
+    </style>
+  </head>
+  <body>
+    <div class="container">
+      <header>
+        <h1>SafeEats – Owner Quick Start</h1>
+        <p class="subtitle">Set up your restaurant, upload menus, and keep allergen information accurate.</p>
+      </header>
+
+      <section class="card">
+        <h2>What is SafeEats?</h2>
+        <p>
+          SafeEats helps restaurants manage menus with clear allergen and dietary information. You can
+          add items manually, upload a menu (PNG/JPEG/PDF) to auto-generate editable items, and use
+          the ingredient parser to detect allergens and dietary categories quickly.
+        </p>
+      </section>
+
+      <section>
+        <h2>What you’ll need</h2>
+        <ul>
+          <li>Access to the SafeEats web app (desktop browser recommended).</li>
+          <li>Restaurant details: name, address, phone, cuisine type.</li>
+          <li>Optional: a digital copy of your menu as PNG, JPEG, or PDF.</li>
+        </ul>
+      </section>
+
+      <section>
+        <h2>Create your account and access your restaurant</h2>
+        <ol>
+          <li>Open the SafeEats app and select <strong>Register</strong> or <strong>Login</strong>.</li>
+          <li>After logging in, create your restaurant profile if prompted (name, address, phone, cuisine).</li>
+          <li>Owners can see their restaurant on the home screen. Select it to open the menu management page.</li>
+        </ol>
+        <div class="card">
+          <strong>Tip:</strong> If you don’t see your restaurant, contact an administrator to confirm your owner access.
+        </div>
+      </section>
+
+      <section>
+        <h2>Add or update menu items</h2>
+        <h3>Option A: Upload your menu (recommended)</h3>
+        <ol>
+          <li>Go to your restaurant’s menu page by selecting <strong>Create New Items</strong>.</li>
+          <li>Select <strong>Import Menu</strong> and choose a PNG, JPEG, or PDF file.</li>
+          <li>Wait for “Extracting items…” then review the generated item forms.</li>
+          <li>Adjust names, descriptions, and prices as needed.</li>
+        </ol>
+        <h3>Option B: Add items manually</h3>
+        <ol>
+          <li>Go to your restaurant’s menu page by selecting <strong>Create New Items</strong>.</li>
+          <li>Click the <strong>+</strong> button to add a new item.</li>
+          <li>Enter <em>Name</em>, <em>Description</em> (optional), and <em>Price</em>.</li>
+          <li>Paste an ingredients list (optional) to use the parser.</li>
+        </ol>
+        <div class="card">
+          <strong>Ingredient parser:</strong> Paste ingredients and click <strong>Parse</strong>.
+          SafeEats suggests allergens and dietary categories. You can toggle them on/off before saving.
+        </div>
+      </section>
+
+      <section>
+        <h2>Review allergens and dietary categories</h2>
+        <ul>
+          <li>Allergens include: milk, eggs, fish, tree nuts, wheat, shellfish, peanuts, soybeans, sesame.</li>
+          <li>Dietary categories include: vegan, vegetarian.</li>
+          <li>Use the toggles on each item to confirm or correct the suggested values.</li>
+        </ul>
+      </section>
+
+      <section>
+        <h2>Save changes</h2>
+        <ol>
+          <li>Click <strong>Add</strong> on individual items, or use <strong>Add All Items</strong> to save in parallel.</li>
+          <li>When complete, return to your restaurant’s page to confirm the updated list.</li>
+        </ol>
+        <div class="card">
+          <strong>Best practice:</strong> After major menu updates, use the parser and do a quick allergen review to ensure accuracy.
+        </div>
+      </section>
+
+      <section>
+        <h2>Keeping data current</h2>
+        <ul>
+          <li>Update items whenever recipes or suppliers change.</li>
+          <li>Re-run the parser for new or reformulated items and double-check allergens.</li>
+          <li>Remove discontinued items to keep the customer view clean.</li>
+        </ul>
+      </section>
+
+      <section class="card">
+        <h2>Troubleshooting</h2>
+        <ul>
+          <li><strong>Can’t log in:</strong> Check your email and password or contact an admin.</li>
+          <li><strong>Upload fails:</strong> Use PNG/JPEG/PDF under your system’s size limits. Try a single page if the file is large.</li>
+          <li><strong>Parser results look off:</strong> Edit manually using the toggles—your changes take precedence.</li>
+        </ul>
+      </section>
+
+      <section class="links">
+        <h2>Next steps</h2>
+        <ul>
+          <li>Staff tutorial: “How do I add menu items?” (see team-provided link)</li>
+          <li>Ingredient parser tips and examples (see team-provided link)</li>
+          <li>Admin manual (deployment & configuration) (see team-provided link)</li>
+        </ul>
+      </section>
+
+      <footer>
+        SafeEats – Owner Quick Start. For support, contact your system administrator.
+      </footer>
+    </div>
+  </body>
+  </html>
+
+
