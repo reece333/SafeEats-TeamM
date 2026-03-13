@@ -280,11 +280,28 @@ def _ensure_genai_configured() -> None:
     genai.configure(api_key=api_key)
 
 
-def _select_model_name() -> str:
-    # Mirrors the selection logic used in parse_ingredients_ai
-    env_model = os.getenv("GEMINI_MODEL")
+def _select_model_name(purpose: Optional[str] = None) -> str:
+    """
+    Select a model name for a given purpose.
+
+    Priority:
+    - GEMINI_INGEST_MODEL for ingestion
+    - GEMINI_PARSE_MODEL for parsing
+    - GEMINI_MODEL as a global override
+    - Otherwise, auto-discover from list_models().
+    """
+    env_model = None
+    if purpose == "ingest":
+        env_model = os.getenv("GEMINI_INGEST_MODEL")
+    elif purpose == "parse":
+        env_model = os.getenv("GEMINI_PARSE_MODEL")
+
+    if not env_model:
+        env_model = os.getenv("GEMINI_MODEL")
+
     if env_model:
         return env_model
+
     try:
         discovered = [
             m.name
@@ -292,8 +309,8 @@ def _select_model_name() -> str:
             if getattr(m, "supported_generation_methods", None)
             and "generateContent" in m.supported_generation_methods
         ]
-        # Prefer 1.5 and flash/pro variants
-        preference = ["1.5", "flash", "pro"]
+        # Simple preference ordering: prefer flash/2.x/3.x models
+        preference = ["3", "2.5", "2.0", "flash", "pro"]
         discovered_sorted = sorted(
             discovered,
             key=lambda n: (0 if any(p in n for p in preference) else 1, n),
@@ -302,13 +319,11 @@ def _select_model_name() -> str:
             return discovered_sorted[0]
     except Exception:
         pass
-    # Fallbacks
+
+    # Final static fallbacks (older model names, may or may not exist)
     for fb in [
-        "gemini-1.5-flash-001",
-        "gemini-1.5-flash",
-        "gemini-1.5-pro",
-        "gemini-1.0-pro",
-        "gemini-pro",
+        "gemini-flash-latest",
+        "gemini-pro-latest",
     ]:
         return fb
 
@@ -338,10 +353,8 @@ async def ingest_menu_file(  # 1. Renamed for clarity
 
         _ensure_genai_configured()
 
-        # 4. IMPORTANT: Ensure this selects a model that supports PDFs,
-        #    e.g., "gemini-1.5-flash" or "gemini-1.5-pro".
-        #    The older "gemini-pro-vision" will NOT work for PDFs.
-        model_name = _select_model_name()
+        # Use a potentially heavier, multimodal-capable model for ingestion.
+        model_name = _select_model_name("ingest")
         model = genai.GenerativeModel(
             model_name=model_name,
             generation_config={
@@ -404,11 +417,10 @@ async def ingest_menu_file(  # 1. Renamed for clarity
 
         # 7. The AI call is identical, just using the generic 'model_part'
         try:
+            # Use a single-call timeout rather than a long retry chain to keep UX snappy.
             response = model.generate_content(
                 [prompt, model_part],
-                request_options=RequestOptions(
-                    retry=retry.Retry(initial=10, multiplier=2, maximum=60, timeout=300)
-                ),
+                request_options=RequestOptions(timeout=90),
             )
         except Exception as e:
             if _is_timeout_error(e):
@@ -464,7 +476,8 @@ async def ingest_menu_file(  # 1. Renamed for clarity
             # Inline invocation of the same logic as parse_ingredients_ai
             # Configure and select model
             _ensure_genai_configured()
-            model_name_local = _select_model_name()
+            # Use a lighter, cheaper model for per-item parsing/classification.
+            model_name_local = _select_model_name("parse")
             model_local = genai.GenerativeModel(
                 model_name=model_name_local,
                 generation_config={
@@ -512,9 +525,7 @@ async def ingest_menu_file(  # 1. Renamed for clarity
             try:
                 ai_resp = model_local.generate_content(
                     ing_prompt,
-                    request_options=RequestOptions(
-                        retry=retry.Retry(initial=10, multiplier=2, maximum=60, timeout=300)
-                    ),
+                    request_options=RequestOptions(timeout=30),
                 )
             except Exception as e:
                 if _is_timeout_error(e):
