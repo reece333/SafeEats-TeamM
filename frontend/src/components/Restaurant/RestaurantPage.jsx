@@ -478,6 +478,13 @@ const RestaurantPage = () => {
                                 ? `$${item.price.toFixed(2)}`
                                 : '$0.00'
                       }}
+                      onImageChange={(newUrl) => {
+                        setMenuItems((prev) =>
+                          prev.map((i) =>
+                            i.id === item.id ? { ...i, image_url: newUrl } : i
+                          )
+                        );
+                      }}
                     />
                     <div className="flex justify-end space-x-2 mt-4">
                       <button
@@ -520,6 +527,13 @@ const RestaurantPage = () => {
                     </div>
                     
                     <div className="pr-16">
+                      {item.image_url && (
+                        <img
+                          src={item.image_url}
+                          alt={item.name}
+                          className="w-24 h-24 object-cover rounded-md mb-2 shadow-sm"
+                        />
+                      )}
                       <p className="text-lg font-medium">{item.name}</p>
                       {/* Changed from green to bold dark gray for prices */}
                       <p className="text-gray-800 font-semibold">
