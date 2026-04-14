@@ -59,6 +59,7 @@ if _BASE_DIR not in sys.path:
 import main as app_main  # noqa: E402
 import routes as app_routes  # noqa: E402
 import auth_routes as app_auth  # noqa: E402
+import permissions as app_permissions  # noqa: E402
 
 
 class _Missing:
@@ -144,15 +145,19 @@ def fake_db():
         "users": {},
         "restaurants": {},
         "menu_items": {},
+        "restaurant_members": {},
     }
     return FakeDB(initial)
 
 
 @pytest.fixture
 def client(fake_db):
-    # Patch db on both modules
+    # Patch db on all modules that use it
     app_routes.db = fake_db  # type: ignore
     app_auth.db = fake_db  # type: ignore
+    # firebase_admin.db is used by auth_routes; patch it so all code uses fake_db
+    import firebase_admin
+    firebase_admin.db = fake_db  # type: ignore
 
     # Reset session tokens
     app_auth.SESSION_TOKENS.clear()
@@ -161,6 +166,7 @@ def client(fake_db):
     users_ref = fake_db.reference("users")
     users_ref.child("user1").set({"is_admin": False, "email": "u1@example.com"})
     users_ref.child("admin1").set({"is_admin": True, "email": "admin@example.com"})
+    users_ref.child("staff1").set({"is_admin": False, "email": "staff@example.com"})
 
     # Seed tokens
     app_auth.SESSION_TOKENS["valid-user-token"] = {
@@ -175,6 +181,12 @@ def client(fake_db):
         "name": "Admin One",
         "is_admin": True,
     }
+    app_auth.SESSION_TOKENS["valid-staff-token"] = {
+        "uid": "staff1",
+        "email": "staff@example.com",
+        "name": "Staff One",
+        "is_admin": False,
+    }
 
     return TestClient(app_main.app)
 
@@ -187,6 +199,11 @@ def user_auth_header():
 @pytest.fixture
 def admin_auth_header():
     return {"Authorization": "Bearer valid-admin-token"}
+
+
+@pytest.fixture
+def staff_auth_header():
+    return {"Authorization": "Bearer valid-staff-token"}
 
 
 
