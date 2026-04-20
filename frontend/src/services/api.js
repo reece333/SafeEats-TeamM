@@ -519,6 +519,86 @@ export const api = {
     }
   },
 
+  uploadMenuItemImage: async (menuItemId, file, onProgress) => {
+    const token = getAuthToken();
+    if (!token) {
+      throw new Error('Authentication required to upload images.');
+    }
+
+    return new Promise((resolve, reject) => {
+      try {
+        const formData = new FormData();
+        formData.append('file', file);
+        formData.append('menu_item_id', menuItemId);
+
+        const xhr = new XMLHttpRequest();
+        xhr.open('POST', `${BASE_URL}/api/upload-image`);
+        xhr.setRequestHeader('Authorization', `Bearer ${token}`);
+
+        xhr.onload = () => {
+          try {
+            if (xhr.status >= 200 && xhr.status < 300) {
+              const data = JSON.parse(xhr.responseText || '{}');
+              resolve(data);
+            } else {
+              let message = 'Failed to upload image';
+              try {
+                const errData = JSON.parse(xhr.responseText || '{}');
+                if (errData && errData.detail) {
+                  message = errData.detail;
+                }
+              } catch {
+                // ignore JSON parse errors
+              }
+              reject(new Error(message));
+            }
+          } catch (e) {
+            reject(e);
+          }
+        };
+
+        xhr.onerror = () => {
+          reject(new Error('Network error during image upload.'));
+        };
+
+        if (xhr.upload && typeof onProgress === 'function') {
+          xhr.upload.onprogress = (event) => {
+            if (event.lengthComputable) {
+              const percent = Math.round((event.loaded * 100) / event.total);
+              onProgress(percent);
+            }
+          };
+        }
+
+        xhr.send(formData);
+      } catch (e) {
+        reject(e);
+      }
+    });
+  },
+
+  deleteMenuItemImage: async (menuItemId) => {
+    try {
+      const response = await httpRequest({
+        method: 'DELETE',
+        url: `${BASE_URL}/api/delete-image/${menuItemId}`,
+        headers: {
+          Accept: 'application/json',
+        },
+      });
+
+      if (response.status !== 200) {
+        const errorData = response.data;
+        throw new Error(errorData?.detail || 'Failed to delete menu item image');
+      }
+
+      return response.data;
+    } catch (error) {
+      console.error('Error deleting menu item image:', error);
+      throw error;
+    }
+  },
+
   // Menu image ingestion
   ingestMenuImage: async (file) => {
     try {

@@ -1,6 +1,6 @@
-from fastapi import APIRouter, HTTPException, Depends, UploadFile, File
+from fastapi import APIRouter, HTTPException, Depends, UploadFile, File, Form, status
 from fastapi.responses import JSONResponse
-from firebase_admin import db
+from firebase_admin import db, storage
 import random
 from models import Restaurant, MenuItem
 from typing import List, Optional
@@ -12,6 +12,8 @@ from google.generativeai.types import RequestOptions
 from google.api_core import retry
 import asyncio
 import concurrent.futures
+from uuid import uuid4
+from datetime import timedelta
 
 try:
     import google.generativeai as genai
@@ -19,6 +21,8 @@ except Exception:
     genai = None
 
 router = APIRouter()
+
+MAX_IMAGE_SIZE_BYTES = 5 * 1024 * 1024  # 5MB
 
 
 def generate_id(ref_path: str, length: int = 5, max_attempts: int = 5) -> str:
@@ -276,11 +280,28 @@ def _ensure_genai_configured() -> None:
     genai.configure(api_key=api_key)
 
 
-def _select_model_name() -> str:
-    # Mirrors the selection logic used in parse_ingredients_ai
-    env_model = os.getenv("GEMINI_MODEL")
+def _select_model_name(purpose: Optional[str] = None) -> str:
+    """
+    Select a model name for a given purpose.
+
+    Priority:
+    - GEMINI_INGEST_MODEL for ingestion
+    - GEMINI_PARSE_MODEL for parsing
+    - GEMINI_MODEL as a global override
+    - Otherwise, auto-discover from list_models().
+    """
+    env_model = None
+    if purpose == "ingest":
+        env_model = os.getenv("GEMINI_INGEST_MODEL")
+    elif purpose == "parse":
+        env_model = os.getenv("GEMINI_PARSE_MODEL")
+
+    if not env_model:
+        env_model = os.getenv("GEMINI_MODEL")
+
     if env_model:
         return env_model
+
     try:
         discovered = [
             m.name
@@ -288,8 +309,8 @@ def _select_model_name() -> str:
             if getattr(m, "supported_generation_methods", None)
             and "generateContent" in m.supported_generation_methods
         ]
-        # Prefer 1.5 and flash/pro variants
-        preference = ["1.5", "flash", "pro"]
+        # Simple preference ordering: prefer flash/2.x/3.x models
+        preference = ["3", "2.5", "2.0", "flash", "pro"]
         discovered_sorted = sorted(
             discovered,
             key=lambda n: (0 if any(p in n for p in preference) else 1, n),
@@ -298,13 +319,11 @@ def _select_model_name() -> str:
             return discovered_sorted[0]
     except Exception:
         pass
-    # Fallbacks
+
+    # Final static fallbacks (older model names, may or may not exist)
     for fb in [
-        "gemini-1.5-flash-001",
-        "gemini-1.5-flash",
-        "gemini-1.5-pro",
-        "gemini-1.0-pro",
-        "gemini-pro",
+        "gemini-flash-latest",
+        "gemini-pro-latest",
     ]:
         return fb
 
@@ -334,10 +353,8 @@ async def ingest_menu_file(  # 1. Renamed for clarity
 
         _ensure_genai_configured()
 
-        # 4. IMPORTANT: Ensure this selects a model that supports PDFs,
-        #    e.g., "gemini-1.5-flash" or "gemini-1.5-pro".
-        #    The older "gemini-pro-vision" will NOT work for PDFs.
-        model_name = _select_model_name()
+        # Use a potentially heavier, multimodal-capable model for ingestion.
+        model_name = _select_model_name("ingest")
         model = genai.GenerativeModel(
             model_name=model_name,
             generation_config={
@@ -347,6 +364,22 @@ async def ingest_menu_file(  # 1. Renamed for clarity
         )
 
         file_bytes = await file.read()
+
+        # Persist the original uploaded menu file to Cloud Storage for auditing/debugging.
+        try:
+            bucket_name = os.getenv("FIREBASE_STORAGE_BUCKET")
+            bucket = storage.bucket(bucket_name) if bucket_name else storage.bucket()
+
+            original_name = file.filename or "menu"
+            _, ext = os.path.splitext(original_name)
+            ext = ext.lower() if ext else ""
+            source_key = f"menu_files/{user_id}/{uuid4().hex}{ext}"
+
+            source_blob = bucket.blob(source_key)
+            source_blob.upload_from_string(file_bytes, content_type=file.content_type)
+        except Exception as storage_error:
+            # Log but do not fail the ingestion if archival storage is unavailable.
+            print(f"Error archiving menu file to storage: {storage_error}")
 
         # 5. This logic now works for images AND PDFs seamlessly
         model_part = {
@@ -384,11 +417,10 @@ async def ingest_menu_file(  # 1. Renamed for clarity
 
         # 7. The AI call is identical, just using the generic 'model_part'
         try:
+            # Use a single-call timeout rather than a long retry chain to keep UX snappy.
             response = model.generate_content(
                 [prompt, model_part],
-                request_options=RequestOptions(
-                    retry=retry.Retry(initial=10, multiplier=2, maximum=60, timeout=300)
-                ),
+                request_options=RequestOptions(timeout=90),
             )
         except Exception as e:
             if _is_timeout_error(e):
@@ -444,7 +476,8 @@ async def ingest_menu_file(  # 1. Renamed for clarity
             # Inline invocation of the same logic as parse_ingredients_ai
             # Configure and select model
             _ensure_genai_configured()
-            model_name_local = _select_model_name()
+            # Use a lighter, cheaper model for per-item parsing/classification.
+            model_name_local = _select_model_name("parse")
             model_local = genai.GenerativeModel(
                 model_name=model_name_local,
                 generation_config={
@@ -492,9 +525,7 @@ async def ingest_menu_file(  # 1. Renamed for clarity
             try:
                 ai_resp = model_local.generate_content(
                     ing_prompt,
-                    request_options=RequestOptions(
-                        retry=retry.Retry(initial=10, multiplier=2, maximum=60, timeout=300)
-                    ),
+                    request_options=RequestOptions(timeout=30),
                 )
             except Exception as e:
                 if _is_timeout_error(e):
@@ -858,6 +889,24 @@ async def get_menu_items(
             if item_data.get("restaurant_id") == restaurant_id
         ]
 
+        # Attach short-lived signed image URLs for any items that have an image path.
+        bucket_name = os.getenv("FIREBASE_STORAGE_BUCKET")
+        bucket = storage.bucket(bucket_name) if bucket_name else storage.bucket()
+
+        for item in restaurant_menu:
+            image_path = item.get("image_path")
+            if image_path:
+                try:
+                    blob = bucket.blob(image_path)
+                    signed_url = blob.generate_signed_url(
+                        expiration=timedelta(hours=1),
+                        method="GET",
+                    )
+                    item["image_url"] = signed_url
+                except Exception as e:
+                    # If generating a signed URL fails, log and continue without image_url
+                    print(f"Error generating signed URL for {image_path}: {e}")
+
         # Apply dietary category filter if specified
         if dietary_category:
             restaurant_menu = [
@@ -899,22 +948,24 @@ async def update_menu_item(restaurant_id: str, menu_item_id: str, menu_item: Men
 
         # Verify menu item exists and belongs to the restaurant
         menu_ref = db.reference(f"menu_items/{menu_item_id}")
-        menu_item_data = menu_ref.get()
+        existing_menu_item_data = menu_ref.get()
 
-        if not menu_item_data:
+        if not existing_menu_item_data:
             raise HTTPException(
                 status_code=404, detail=f"Menu item {menu_item_id} not found"
             )
 
-        if menu_item_data.get("restaurant_id") != restaurant_id:
+        if existing_menu_item_data.get("restaurant_id") != restaurant_id:
             raise HTTPException(
                 status_code=403,
                 detail=f"Menu item {menu_item_id} does not belong to restaurant {restaurant_id}",
             )
 
-        # Update menu item data while preserving ID and restaurant_id
+        # Update menu item data while preserving any existing fields
+        # (such as image metadata) that are not part of the MenuItem model.
         menu_item_dict = menu_item.dict()
         updated_menu_item = {
+            **(existing_menu_item_data or {}),
             **menu_item_dict,
             "id": menu_item_id,
             "restaurant_id": restaurant_id,
@@ -971,3 +1022,177 @@ async def delete_menu_item(restaurant_id: str, menu_item_id: str):
     except Exception as e:
         print(f"Error deleting menu item: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/api/upload-image")
+async def upload_menu_item_image(
+    file: UploadFile = File(...),
+    menu_item_id: str = Form(...),
+    token_data: dict = Depends(verify_token),
+):
+    """
+    Upload an image for a menu item, store it in Firebase Cloud Storage,
+    and persist the public URL on the corresponding menu item record.
+    """
+    try:
+        user_id = token_data.get("uid")
+        if not user_id:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid user token",
+            )
+
+        # Validate MIME type
+        allowed_types = {"image/jpeg", "image/png", "image/webp"}
+        if file.content_type not in allowed_types:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Only JPEG, PNG, and WebP images are allowed.",
+            )
+
+        # Read file into memory and enforce size limit
+        file_bytes = await file.read()
+        if len(file_bytes) > MAX_IMAGE_SIZE_BYTES:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Image exceeds maximum size of 5MB.",
+            )
+
+        # Ensure menu item exists
+        menu_ref = db.reference(f"menu_items/{menu_item_id}")
+        menu_item_data = menu_ref.get()
+        if not menu_item_data:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Menu item {menu_item_id} not found",
+            )
+
+        # Authorization: only restaurant owner or admin can modify the image
+        restaurant_id = menu_item_data.get("restaurant_id")
+        if not restaurant_id:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Menu item is missing restaurant association.",
+            )
+
+        restaurant_ref = db.reference(f"restaurants/{restaurant_id}")
+        restaurant_data = restaurant_ref.get()
+        if not restaurant_data:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Restaurant {restaurant_id} not found",
+            )
+
+        is_admin = await check_admin_status(token_data)
+        if restaurant_data.get("owner_uid") != user_id and not is_admin:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="You don't have permission to modify this menu item image.",
+            )
+
+        # Determine storage bucket
+        bucket_name = os.getenv("FIREBASE_STORAGE_BUCKET")
+        bucket = storage.bucket(bucket_name) if bucket_name else storage.bucket()
+
+        # Build a safe, reasonably unique filename
+        original_name = file.filename or "image"
+        _, ext = os.path.splitext(original_name)
+        ext = ext.lower() if ext else ""
+        unique_name = f"{uuid4().hex}{ext}"
+        blob_path = f"menu_items/{menu_item_id}/{unique_name}"
+
+        blob = bucket.blob(blob_path)
+        blob.upload_from_string(file_bytes, content_type=file.content_type)
+
+        # Generate a short-lived signed URL instead of making the object public
+        image_url = blob.generate_signed_url(
+            expiration=timedelta(hours=1),
+            method="GET",
+        )
+
+        # Persist path (and last signed URL for convenience) on the menu item record
+        menu_ref.update({"image_url": image_url, "image_path": blob_path})
+
+        return {"image_url": image_url}
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"Error uploading menu item image: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to upload image",
+        )
+
+
+@router.delete("/api/delete-image/{menu_item_id}")
+async def delete_menu_item_image(
+    menu_item_id: str,
+    token_data: dict = Depends(verify_token),
+):
+    """
+    Delete a menu item's image from Firebase Cloud Storage and clear
+    the stored URL on the corresponding database record.
+    """
+    try:
+        user_id = token_data.get("uid")
+        if not user_id:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid user token",
+            )
+
+        # Locate the menu item
+        menu_ref = db.reference(f"menu_items/{menu_item_id}")
+        menu_item_data = menu_ref.get()
+        if not menu_item_data:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Menu item {menu_item_id} not found",
+            )
+
+        restaurant_id = menu_item_data.get("restaurant_id")
+        if not restaurant_id:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Menu item is missing restaurant association.",
+            )
+
+        restaurant_ref = db.reference(f"restaurants/{restaurant_id}")
+        restaurant_data = restaurant_ref.get()
+        if not restaurant_data:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Restaurant {restaurant_id} not found",
+            )
+
+        is_admin = await check_admin_status(token_data)
+        if restaurant_data.get("owner_uid") != user_id and not is_admin:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="You don't have permission to modify this menu item image.",
+            )
+
+        image_path = menu_item_data.get("image_path")
+
+        # Best-effort deletion from Cloud Storage if we know the path
+        if image_path:
+            try:
+                bucket_name = os.getenv("FIREBASE_STORAGE_BUCKET")
+                bucket = storage.bucket(bucket_name) if bucket_name else storage.bucket()
+                blob = bucket.blob(image_path)
+                blob.delete()
+            except Exception as storage_error:
+                print(f"Error deleting image blob for menu item {menu_item_id}: {storage_error}")
+
+        # Clear image fields on the menu item record
+        menu_ref.update({"image_url": None, "image_path": None})
+
+        return {"message": f"Image for menu item {menu_item_id} deleted"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"Error deleting menu item image: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to delete image",
+        )
