@@ -181,3 +181,84 @@ def test_restaurant_menu_delete(client: TestClient, user_auth_header, fake_db):
     resp4j = resp4.json()
     assert resp4.status_code == 200
     assert len(resp4j) == 0
+
+
+def test_restaurant_menu_duplicate_archive_and_restore(client: TestClient, user_auth_header, fake_db):
+    fake_db.reference("restaurants").set({})
+    resp1 = client.post("/restaurants/", headers=user_auth_header, json={
+        "name": "Lorem Ipsum",
+        "phone": "+1 123-456-7890",
+        "address": "200 E Cameron Ave, Chapel Hill, NC 27514",
+        "cuisine_type": "American"
+    })
+    assert resp1.status_code == 200
+    restaurant_id = resp1.json()['id']
+
+    resp2 = client.post(f"/restaurants/{restaurant_id}/menu", headers=user_auth_header, json={
+        "name": "Pasta",
+        "description": "Noodles with sauce",
+        "price": 11.5,
+        "ingredients": "noodles, tomato sauce",
+        "allergens": ["wheat"],
+        "dietaryCategories": []
+    })
+    assert resp2.status_code == 200
+    menu_item_id = resp2.json()['id']
+
+    resp3 = client.post(f"/restaurants/{restaurant_id}/menu/{menu_item_id}/duplicate", headers=user_auth_header)
+    assert resp3.status_code == 200
+    duplicated = resp3.json()
+    assert duplicated["id"] != menu_item_id
+    assert duplicated["name"] == "Pasta"
+    assert duplicated["archived"] is False
+    assert duplicated["ingredients"] == "noodles, tomato sauce"
+
+    resp4 = client.post(f"/restaurants/{restaurant_id}/menu/{menu_item_id}/archive", headers=user_auth_header)
+    assert resp4.status_code == 200
+    assert resp4.json()["archived"] is True
+
+    resp5 = client.post(f"/restaurants/{restaurant_id}/menu/{menu_item_id}/restore", headers=user_auth_header)
+    assert resp5.status_code == 200
+    assert resp5.json()["archived"] is False
+
+
+def test_restaurant_menu_bulk_update(client: TestClient, user_auth_header, fake_db):
+    fake_db.reference("restaurants").set({})
+    resp1 = client.post("/restaurants/", headers=user_auth_header, json={
+        "name": "Lorem Ipsum",
+        "phone": "+1 123-456-7890",
+        "address": "200 E Cameron Ave, Chapel Hill, NC 27514",
+        "cuisine_type": "American"
+    })
+    assert resp1.status_code == 200
+    restaurant_id = resp1.json()['id']
+
+    item_ids = []
+    for payload in [
+        {"name": "Soup", "description": "Warm", "price": 6.25, "allergens": ["milk"], "dietaryCategories": ["vegetarian"]},
+        {"name": "Salad", "description": "Fresh", "price": 7.5, "allergens": [], "dietaryCategories": []},
+    ]:
+        resp = client.post(f"/restaurants/{restaurant_id}/menu", headers=user_auth_header, json=payload)
+        assert resp.status_code == 200
+        item_ids.append(resp.json()["id"])
+
+    resp2 = client.post(
+        f"/restaurants/{restaurant_id}/menu/bulk-update",
+        headers=user_auth_header,
+        json={
+            "item_ids": item_ids,
+            "add_allergens": ["fish"],
+            "remove_allergens": ["milk"],
+            "add_dietary_categories": ["vegan"],
+            "remove_dietary_categories": ["vegetarian"],
+        },
+    )
+    assert resp2.status_code == 200
+    assert resp2.json()["updated_count"] == 2
+
+    resp3 = client.get(f"/restaurants/{restaurant_id}/menu", headers=user_auth_header)
+    menu_items = {item["id"]: item for item in resp3.json()}
+    assert menu_items[item_ids[0]]["allergens"] == ["fish"]
+    assert menu_items[item_ids[0]]["dietaryCategories"] == ["vegan"]
+    assert menu_items[item_ids[1]]["allergens"] == ["fish"]
+    assert menu_items[item_ids[1]]["dietaryCategories"] == ["vegan"]

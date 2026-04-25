@@ -1,8 +1,8 @@
 from fastapi import APIRouter, HTTPException, Depends, UploadFile, File, Form, status
 from fastapi.responses import JSONResponse
-from firebase_admin import db, storage
+from firebase_admin import auth, db, storage
 import random
-from models import Restaurant, MenuItem
+from models import Restaurant, MenuItem, MenuItemUpdate, BulkMenuUpdate
 from typing import List, Optional
 from auth_routes import verify_token
 import os
@@ -79,6 +79,71 @@ def _is_timeout_error(error: Exception) -> bool:
     # Fallback: string heuristics
     text = str(error).lower()
     return any(token in text for token in ("deadline exceeded", "timeout", "timed out"))
+
+
+VALID_ALLERGENS = {
+    "milk",
+    "eggs",
+    "fish",
+    "tree_nuts",
+    "wheat",
+    "shellfish",
+    "gluten_free",
+    "peanuts",
+    "soybeans",
+    "sesame",
+}
+
+VALID_DIETARY_CATEGORIES = {"vegan", "vegetarian"}
+
+
+async def _get_authenticated_user(token_data: dict):
+    user_id = token_data.get("uid")
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Invalid user token")
+
+    try:
+        user_record = auth.get_user(user_id)
+    except Exception:
+        raise HTTPException(status_code=401, detail="Invalid user token")
+
+    return user_id, user_record
+
+
+async def _authorize_restaurant_access(restaurant_id: str, token_data: dict):
+    user_id, user_record = await _get_authenticated_user(token_data)
+    is_admin = await check_admin_status(token_data)
+
+    restaurant_ref = db.reference(f"restaurants/{restaurant_id}")
+    restaurant_data = restaurant_ref.get()
+    if not restaurant_data:
+        raise HTTPException(status_code=404, detail=f"Restaurant {restaurant_id} not found")
+
+    if restaurant_data.get("owner_uid") != user_id and not is_admin:
+        raise HTTPException(
+            status_code=403,
+            detail="You don't have permission to modify this restaurant's menu",
+        )
+
+    return restaurant_data, user_record, is_admin
+
+
+def _normalize_menu_item_record(item_id: str, item_data: dict, restaurant_id: str):
+    normalized = {"id": str(item_id), **(item_data or {})}
+    normalized["restaurant_id"] = restaurant_id
+    normalized["archived"] = bool(normalized.get("archived", False))
+    normalized.setdefault("ingredients", "")
+    normalized.setdefault("allergens", [])
+    normalized.setdefault("dietaryCategories", [])
+    return normalized
+
+
+def _merge_tag_updates(existing_values: List[str], additions: List[str], removals: List[str]) -> List[str]:
+    merged = [value for value in (existing_values or []) if value not in removals]
+    for value in additions or []:
+        if value not in merged:
+            merged.append(value)
+    return merged
 
 
 # Check if the user is an admin
@@ -764,55 +829,17 @@ async def add_menu_item(
     restaurant_id: str, menu_item: MenuItem, token_data: dict = Depends(verify_token)
 ):
     try:
-        # Extract user ID from token
-        user_id = token_data.get("uid")
-        if not user_id:
-            raise HTTPException(status_code=401, detail="Invalid user token")
-
-        # Check if user is admin
-        is_admin = await check_admin_status(token_data)
-
-        # Verify restaurant exists
-        restaurant_ref = db.reference(f"restaurants/{restaurant_id}")
-        restaurant_data = restaurant_ref.get()
-
-        if not restaurant_data:
-            raise HTTPException(
-                status_code=404, detail=f"Restaurant {restaurant_id} not found"
-            )
-
-        # Verify ownership or admin status
-        if restaurant_data.get("owner_uid") != user_id and not is_admin:
-            raise HTTPException(
-                status_code=403,
-                detail="You don't have permission to modify this restaurant's menu",
-            )
+        _, _, _ = await _authorize_restaurant_access(restaurant_id, token_data)
 
         # Validate allergens and dietary categories
-        valid_allergens = {
-            "milk",
-            "eggs",
-            "fish",
-            "tree_nuts",
-            "wheat",
-            "shellfish",
-            "gluten_free",
-            "peanuts",
-            "soybeans",
-            "sesame",
-        }
-        valid_dietary_categories = {"vegan", "vegetarian"}
-
-        # Validate allergens
-        invalid_allergens = set(menu_item.allergens) - valid_allergens
+        invalid_allergens = set(menu_item.allergens) - VALID_ALLERGENS
         if invalid_allergens:
             raise HTTPException(
                 status_code=400,
                 detail=f"Invalid allergens: {', '.join(invalid_allergens)}",
             )
 
-        # Validate dietary categories
-        invalid_categories = set(menu_item.dietaryCategories) - valid_dietary_categories
+        invalid_categories = set(menu_item.dietaryCategories) - VALID_DIETARY_CATEGORIES
         if invalid_categories:
             raise HTTPException(
                 status_code=400,
@@ -851,29 +878,7 @@ async def get_menu_items(
     token_data: dict = Depends(verify_token),
 ):
     try:
-        # Extract user ID from token
-        user_id = token_data.get("uid")
-        if not user_id:
-            raise HTTPException(status_code=401, detail="Invalid user token")
-
-        # Check if user is admin
-        is_admin = await check_admin_status(token_data)
-
-        # Verify restaurant exists
-        restaurant_ref = db.reference(f"restaurants/{restaurant_id}")
-        restaurant_data = restaurant_ref.get()
-
-        if not restaurant_data:
-            raise HTTPException(
-                status_code=404, detail=f"Restaurant {restaurant_id} not found"
-            )
-
-        # Verify ownership or admin status
-        if restaurant_data.get("owner_uid") != user_id and not is_admin:
-            raise HTTPException(
-                status_code=403,
-                detail="You don't have permission to access this restaurant's menu",
-            )
+        restaurant_data, _, _ = await _authorize_restaurant_access(restaurant_id, token_data)
 
         # Get all menu items for the restaurant
         menu_ref = db.reference("menu_items")
@@ -884,7 +889,7 @@ async def get_menu_items(
 
         # Filter menu items for this restaurant
         restaurant_menu = [
-            {"id": str(item_id), **item_data}
+            _normalize_menu_item_record(item_id, item_data, restaurant_id)
             for item_id, item_data in menu_items.items()
             if item_data.get("restaurant_id") == restaurant_id
         ]
@@ -935,16 +940,9 @@ async def get_menu_items(
 
 
 @router.put("/restaurants/{restaurant_id}/menu/{menu_item_id}")
-async def update_menu_item(restaurant_id: str, menu_item_id: str, menu_item: MenuItem):
+async def update_menu_item(restaurant_id: str, menu_item_id: str, menu_item: MenuItemUpdate, token_data: dict = Depends(verify_token)):
     try:
-        # Verify restaurant exists
-        restaurant_ref = db.reference(f"restaurants/{restaurant_id}")
-        restaurant_data = restaurant_ref.get()
-
-        if not restaurant_data:
-            raise HTTPException(
-                status_code=404, detail=f"Restaurant {restaurant_id} not found"
-            )
+        await _authorize_restaurant_access(restaurant_id, token_data)
 
         # Verify menu item exists and belongs to the restaurant
         menu_ref = db.reference(f"menu_items/{menu_item_id}")
@@ -963,13 +961,17 @@ async def update_menu_item(restaurant_id: str, menu_item_id: str, menu_item: Men
 
         # Update menu item data while preserving any existing fields
         # (such as image metadata) that are not part of the MenuItem model.
-        menu_item_dict = menu_item.dict()
+        menu_item_dict = menu_item.dict(exclude_unset=True)
         updated_menu_item = {
             **(existing_menu_item_data or {}),
             **menu_item_dict,
             "id": menu_item_id,
             "restaurant_id": restaurant_id,
+            "archived": bool((existing_menu_item_data or {}).get("archived", False)),
         }
+
+        if "archived" in menu_item_dict:
+            updated_menu_item["archived"] = bool(menu_item_dict["archived"])
 
         # Update in database
         menu_ref.set(updated_menu_item)
@@ -981,6 +983,197 @@ async def update_menu_item(restaurant_id: str, menu_item_id: str, menu_item: Men
         raise he
     except Exception as e:
         print(f"Error updating menu item: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/restaurants/{restaurant_id}/menu/{menu_item_id}/duplicate")
+async def duplicate_menu_item(
+    restaurant_id: str,
+    menu_item_id: str,
+    token_data: dict = Depends(verify_token),
+):
+    try:
+        await _authorize_restaurant_access(restaurant_id, token_data)
+
+        menu_ref = db.reference(f"menu_items/{menu_item_id}")
+        existing_menu_item_data = menu_ref.get()
+
+        if not existing_menu_item_data:
+            raise HTTPException(
+                status_code=404, detail=f"Menu item {menu_item_id} not found"
+            )
+
+        if existing_menu_item_data.get("restaurant_id") != restaurant_id:
+            raise HTTPException(
+                status_code=403,
+                detail=f"Menu item {menu_item_id} does not belong to restaurant {restaurant_id}",
+            )
+
+        new_menu_item_id = generate_id("menu_items")
+        duplicated_menu_item = {
+            **existing_menu_item_data,
+            "id": new_menu_item_id,
+            "restaurant_id": restaurant_id,
+            "archived": False,
+        }
+        duplicated_menu_item.pop("image_url", None)
+
+        db.reference("menu_items").child(new_menu_item_id).set(duplicated_menu_item)
+        return duplicated_menu_item
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"Error duplicating menu item: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/restaurants/{restaurant_id}/menu/{menu_item_id}/archive")
+async def archive_menu_item(
+    restaurant_id: str,
+    menu_item_id: str,
+    token_data: dict = Depends(verify_token),
+):
+    try:
+        await _authorize_restaurant_access(restaurant_id, token_data)
+
+        menu_ref = db.reference(f"menu_items/{menu_item_id}")
+        existing_menu_item_data = menu_ref.get()
+
+        if not existing_menu_item_data:
+            raise HTTPException(
+                status_code=404, detail=f"Menu item {menu_item_id} not found"
+            )
+
+        if existing_menu_item_data.get("restaurant_id") != restaurant_id:
+            raise HTTPException(
+                status_code=403,
+                detail=f"Menu item {menu_item_id} does not belong to restaurant {restaurant_id}",
+            )
+
+        updated_menu_item = {
+            **existing_menu_item_data,
+            "id": menu_item_id,
+            "restaurant_id": restaurant_id,
+            "archived": True,
+        }
+        menu_ref.set(updated_menu_item)
+        return updated_menu_item
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"Error archiving menu item: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/restaurants/{restaurant_id}/menu/{menu_item_id}/restore")
+async def restore_menu_item(
+    restaurant_id: str,
+    menu_item_id: str,
+    token_data: dict = Depends(verify_token),
+):
+    try:
+        await _authorize_restaurant_access(restaurant_id, token_data)
+
+        menu_ref = db.reference(f"menu_items/{menu_item_id}")
+        existing_menu_item_data = menu_ref.get()
+
+        if not existing_menu_item_data:
+            raise HTTPException(
+                status_code=404, detail=f"Menu item {menu_item_id} not found"
+            )
+
+        if existing_menu_item_data.get("restaurant_id") != restaurant_id:
+            raise HTTPException(
+                status_code=403,
+                detail=f"Menu item {menu_item_id} does not belong to restaurant {restaurant_id}",
+            )
+
+        updated_menu_item = {
+            **existing_menu_item_data,
+            "id": menu_item_id,
+            "restaurant_id": restaurant_id,
+            "archived": False,
+        }
+        menu_ref.set(updated_menu_item)
+        return updated_menu_item
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"Error restoring menu item: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/restaurants/{restaurant_id}/menu/bulk-update")
+async def bulk_update_menu_items(
+    restaurant_id: str,
+    payload: BulkMenuUpdate,
+    token_data: dict = Depends(verify_token),
+):
+    try:
+        await _authorize_restaurant_access(restaurant_id, token_data)
+
+        invalid_allergens = set(payload.add_allergens + payload.remove_allergens) - VALID_ALLERGENS
+        if invalid_allergens:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid allergens: {', '.join(sorted(invalid_allergens))}",
+            )
+
+        invalid_categories = (
+            set(payload.add_dietary_categories + payload.remove_dietary_categories)
+            - VALID_DIETARY_CATEGORIES
+        )
+        if invalid_categories:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid dietary categories: {', '.join(sorted(invalid_categories))}",
+            )
+
+        if not payload.item_ids:
+            raise HTTPException(status_code=400, detail="No menu item ids provided")
+
+        menu_ref = db.reference("menu_items")
+        updated_items = []
+
+        for menu_item_id in payload.item_ids:
+            item_ref = menu_ref.child(menu_item_id)
+            existing_menu_item_data = item_ref.get()
+
+            if not existing_menu_item_data:
+                raise HTTPException(
+                    status_code=404, detail=f"Menu item {menu_item_id} not found"
+                )
+
+            if existing_menu_item_data.get("restaurant_id") != restaurant_id:
+                raise HTTPException(
+                    status_code=403,
+                    detail=f"Menu item {menu_item_id} does not belong to restaurant {restaurant_id}",
+                )
+
+            updated_menu_item = {
+                **existing_menu_item_data,
+                "id": menu_item_id,
+                "restaurant_id": restaurant_id,
+                "allergens": _merge_tag_updates(
+                    existing_menu_item_data.get("allergens", []),
+                    payload.add_allergens,
+                    payload.remove_allergens,
+                ),
+                "dietaryCategories": _merge_tag_updates(
+                    existing_menu_item_data.get("dietaryCategories", []),
+                    payload.add_dietary_categories,
+                    payload.remove_dietary_categories,
+                ),
+                "archived": bool(existing_menu_item_data.get("archived", False)),
+            }
+            item_ref.set(updated_menu_item)
+            updated_items.append(updated_menu_item)
+
+        return {"updated_count": len(updated_items), "items": updated_items}
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"Error bulk updating menu items: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
 

@@ -697,7 +697,7 @@ export const api = {
   
   updateMenuItem: async (restaurantId, menuItemId, menuItemData) => {
     try {
-      const response = await CapacitorHttp.request({
+      const response = await httpRequest({
         method: 'PUT',
         url: `${BASE_URL}/restaurants/${restaurantId}/menu/${menuItemId}`,
         headers: {
@@ -721,7 +721,7 @@ export const api = {
 
   deleteMenuItem: async (restaurantId, menuItemId) => {
     try {
-      const response = await CapacitorHttp.request({
+      const response = await httpRequest({
         method: 'DELETE',
         url: `${BASE_URL}/restaurants/${restaurantId}/menu/${menuItemId}`,
         headers: {
@@ -737,6 +737,92 @@ export const api = {
       return response.data;
     } catch (error) {
       console.error('Error deleting menu item:', error);
+      throw error;
+    }
+  },
+
+  duplicateMenuItem: async (restaurantId, menuItemId) => {
+    try {
+      const response = await httpRequest({
+        method: 'POST',
+        url: `${BASE_URL}/restaurants/${restaurantId}/menu/${menuItemId}/duplicate`,
+        headers: {
+          'Accept': 'application/json'
+        }
+      });
+
+      if (response.status !== 200) {
+        throw new Error(response.data?.detail || 'Failed to duplicate menu item');
+      }
+
+      return response.data;
+    } catch (error) {
+      console.error('Error duplicating menu item:', error);
+      throw error;
+    }
+  },
+
+  archiveMenuItem: async (restaurantId, menuItemId) => {
+    try {
+      const response = await httpRequest({
+        method: 'POST',
+        url: `${BASE_URL}/restaurants/${restaurantId}/menu/${menuItemId}/archive`,
+        headers: {
+          'Accept': 'application/json'
+        }
+      });
+
+      if (response.status !== 200) {
+        throw new Error(response.data?.detail || 'Failed to archive menu item');
+      }
+
+      return response.data;
+    } catch (error) {
+      console.error('Error archiving menu item:', error);
+      throw error;
+    }
+  },
+
+  restoreMenuItem: async (restaurantId, menuItemId) => {
+    try {
+      const response = await httpRequest({
+        method: 'POST',
+        url: `${BASE_URL}/restaurants/${restaurantId}/menu/${menuItemId}/restore`,
+        headers: {
+          'Accept': 'application/json'
+        }
+      });
+
+      if (response.status !== 200) {
+        throw new Error(response.data?.detail || 'Failed to restore menu item');
+      }
+
+      return response.data;
+    } catch (error) {
+      console.error('Error restoring menu item:', error);
+      throw error;
+    }
+  },
+
+  bulkUpdateMenuItems: async (restaurantId, payload) => {
+    try {
+      const response = await httpRequest({
+        method: 'POST',
+        url: `${BASE_URL}/restaurants/${restaurantId}/menu/bulk-update`,
+        headers: {
+          'Content-Type': 'application/json',
+          'Accept': 'application/json'
+        },
+        data: payload
+      });
+
+      if (response.status !== 200) {
+        throw new Error(response.data?.detail || 'Failed to bulk update menu items');
+      }
+
+      return response.data;
+    } catch (error) {
+      console.error('Error bulk updating menu items:', error);
       throw error;
     }
   }
