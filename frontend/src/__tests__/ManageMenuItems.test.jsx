@@ -50,6 +50,7 @@ beforeEach(() => {
   });
 
   api.getRestaurants.mockResolvedValue([{ id: "abc", name: "Adrian's Cafe" }]);
+  api.getMenuItems.mockResolvedValue([]);
   api.ingestMenuImage.mockResolvedValue({ items: [] });
   api.addMenuItem.mockImplementation(async (rid, data) => ({ id: "m1", ...data }));
 

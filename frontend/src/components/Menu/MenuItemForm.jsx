@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { api } from '../../services/api';
+import ImageUpload from './ImageUpload';
 
 const allergenOptions = [
   { id: 'milk', label: 'Milk', icon: '🥛' },
@@ -19,7 +20,14 @@ const dietaryCategories = [
   { id: 'vegetarian', label: 'Vegetarian', icon: '🥗' }
 ];
 
-const MenuItemForm = ({ formIndex, onRemove, onFormChange, initialData = {}, restaurantOptions }) => {
+const MenuItemForm = ({
+  formIndex,
+  onRemove,
+  onFormChange,
+  initialData = {},
+  restaurantOptions,
+  onImageChange,
+}) => {
   // Use a ref to track if this is the initial render
   const isFirstRender = useRef(true);
   
@@ -294,7 +302,20 @@ const MenuItemForm = ({ formIndex, onRemove, onFormChange, initialData = {}, res
         <div className='flex justify-between'>
 
 
-          {/* TODO: PUT THE IMAGE FIELD HERE */}
+          {initialData && initialData.id ? (
+            <ImageUpload
+              menuItemId={initialData.id}
+              initialImageUrl={initialData.image_url}
+              onImageChange={onImageChange}
+            />
+          ) : (
+            <div className="w-64 mr-6">
+              <label className="block font-medium text-lg mb-2">Item Photo</label>
+              <div className="border border-dashed border-gray-300 rounded-md p-3 text-sm text-gray-500">
+                Images can be added after this menu item has been created.
+              </div>
+            </div>
+          )}
 
 
           {/* Container for price and dietary category */}
