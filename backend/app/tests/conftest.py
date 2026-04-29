@@ -249,9 +249,8 @@ def storage_objects():
         yield bucket._objects
     finally:
         bucket._objects.clear()
+
+
+@pytest.fixture
 def staff_auth_header():
     return {"Authorization": "Bearer valid-staff-token"}
-
-
-
-
