@@ -8,7 +8,7 @@ const getBaseUrl = () => {
   }
   
   // When deployed on Render
-  return 'https://restaurant-allergy-manager-backend.onrender.com'; 
+  return 'https://safeeats-teamm-backend.onrender.com'; 
 };
 
 const BASE_URL = getBaseUrl();
