@@ -70,11 +70,9 @@ const Header = ({ restaurantId }) => {
     if (isAdmin) {
       navigate('/restaurant-list');
     }
-    // For authenticated users with a restaurant, go to their dashboard
-    else if (isAuthenticated && restaurantId) {
-      navigate(`/restaurant/${restaurantId}`);
+    else if (isAuthenticated && !isAdmin) {
+      navigate('/dashboard');
     }
-    // Otherwise go to landing page
     else {
       navigate('/');
     }
@@ -93,13 +91,12 @@ const Header = ({ restaurantId }) => {
         {/* Navigation links - only show if authenticated */}
         {isAuthenticated && (
           <nav className="hidden md:flex space-x-6 flex-grow">
-            {/* Dashboard link - show for all authenticated users with a restaurant who aren't admins */}
-            {restaurantId && !isAdmin && (
-              <Link 
-                to={`/restaurant/${restaurantId}`} 
+            {!isAdmin && (
+              <Link
+                to="/dashboard"
                 className="text-gray-700 hover:text-[#8DB670]"
               >
-                Dashboard
+                My restaurants
               </Link>
             )}
             

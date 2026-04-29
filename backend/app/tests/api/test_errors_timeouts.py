@@ -21,7 +21,7 @@ def test_ingest_menu_timeout_returns_504(client: TestClient, user_auth_header, m
     app_routes.genai = stub_genai  # type: ignore
     # Bypass configuration and model-name selection
     app_routes._ensure_genai_configured = lambda: None  # type: ignore
-    app_routes._select_model_name = lambda: "dummy"  # type: ignore
+    app_routes._select_model_name = lambda purpose=None: "dummy"  # type: ignore
 
     files = {"file": ("menu.png", b"123", "image/png")}
     resp = client.post("/ai/ingest-menu", headers=user_auth_header, files=files)

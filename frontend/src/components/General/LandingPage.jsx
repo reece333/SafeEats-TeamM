@@ -38,18 +38,12 @@ const LandingPage = () => {
         if (user) {
           setIsAuthenticated(true);
           setIsAdmin(user.is_admin);
-          setUserRestaurantId(user.restaurantId);
+          setUserRestaurantId(user.restaurantId || null);
           
-          // If user is admin, navigate to restaurant list
           if (user.is_admin) {
             navigate('/restaurant-list');
-          } 
-          // If user has a restaurant, navigate to it
-          else if (user.restaurantId) {
-            navigate(`/restaurant/${user.restaurantId}`);
           } else {
-            // Otherwise navigate to add restaurant page
-            navigate('/add-restaurant');
+            navigate('/dashboard');
           }
         } else {
           setIsAuthenticated(false);
@@ -102,16 +96,10 @@ const LandingPage = () => {
       
       // Wait a moment to ensure token is stored before navigating
       setTimeout(() => {
-        // If user is admin, navigate to restaurant list
         if (response.is_admin) {
           navigate('/restaurant-list');
-        }
-        // If user has a restaurant, navigate to it
-        else if (response.restaurantId) {
-          navigate(`/restaurant/${response.restaurantId}`);
         } else {
-          // Otherwise navigate to add restaurant page
-          navigate('/add-restaurant');
+          navigate('/dashboard');
         }
       }, 300);
     } catch (error) {
@@ -163,13 +151,12 @@ const LandingPage = () => {
               </>
             )}
             
-            {/* Regular user buttons */}
-            {!isAdmin && userRestaurantId && (
-              <Link 
-                to={`/restaurant/${userRestaurantId}`}
+            {!isAdmin && (
+              <Link
+                to="/dashboard"
                 className="block w-full text-center bg-[#8DB670] rounded-xl py-3 font-semibold text-white hover:bg-[#6c8b55] mb-4"
               >
-                Go to Your Restaurant Dashboard
+                Go to my restaurants
               </Link>
             )}
           </div>
@@ -220,7 +207,7 @@ const LandingPage = () => {
                 onClick={handleSignupClick}
                 className="text-[#8DB670] font-semibold hover:underline inline-block mt-2"
               >
-                Register a New Restaurant
+                Create an account
               </button>
             </div>
           </div>
