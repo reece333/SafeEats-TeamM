@@ -61,11 +61,13 @@ const ProfilePage = () => {
         <div className="bg-white rounded-lg shadow-md p-6 max-w-3xl mx-auto">
           <p className="text-center text-red-500">{error}</p>
           <div className="mt-4 text-center">
-            <button 
-              onClick={() => navigate('/restaurant-list')}
+            <button
+              onClick={() =>
+                navigate(localStorage.getItem('is_admin') === 'true' ? '/restaurant-list' : '/dashboard')
+              }
               className="px-4 py-2 bg-gray-200 rounded hover:bg-gray-300"
             >
-              Return to Dashboard
+              Return to dashboard
             </button>
           </div>
         </div>
@@ -113,11 +115,11 @@ const ProfilePage = () => {
         
         {/* Actions */}
         <div className="flex justify-center mt-6">
-          <button 
-            onClick={() => navigate('/restaurant-list')}
+          <button
+            onClick={() => navigate(user?.is_admin ? '/restaurant-list' : '/dashboard')}
             className="px-4 py-2 text-white bg-[#8DB670] rounded hover:bg-[#6c8b55]"
           >
-            Back to Dashboard
+            Back to dashboard
           </button>
         </div>
       </div>

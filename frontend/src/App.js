@@ -9,6 +9,7 @@ import RegisterRestaurant from './components/Restaurant/RegisterRestaurant';
 import ProfilePage from './components/General/ProfilePage';
 import AdminPanel from './components/General/AdminPanel';
 import Header from './components/General/Header';
+import DashboardPage from './components/General/DashboardPage';
 
 // Simplified Protected Route - uses localStorage directly for quick checks
 const ProtectedRoute = ({ element }) => {
@@ -33,14 +34,7 @@ const AdminRoute = ({ element }) => {
   }
   
   if (!isAdmin) {
-    // Redirect to user's restaurant if not admin
-    const restaurantId = localStorage.getItem('restaurant_id');
-    if (restaurantId) {
-      return <Navigate to={`/restaurant/${restaurantId}`} replace />;
-    } else {
-      // If no restaurant yet, go to add restaurant page
-      return <Navigate to="/add-restaurant" replace />;
-    }
+    return <Navigate to="/dashboard" replace />;
   }
   
   return element;
@@ -75,6 +69,10 @@ function App() {
             <Route path="/signup" element={<RegisterRestaurant />} />
             
             {/* Protected routes */}
+            <Route 
+              path="/dashboard" 
+              element={<ProtectedRoute element={<DashboardPage />} />} 
+            />
             <Route 
               path="/profile" 
               element={<ProtectedRoute element={<ProfilePage />} />} 

@@ -35,10 +35,18 @@ test.describe('ManageMenuItems E2E', () => {
           status: 200,
           contentType: 'application/json',
           body: JSON.stringify({
-            id: 'user-1',
+            uid: 'user-1',
             name: 'Test Owner',
             restaurantId: RESTAURANT_ID,
             is_admin: false,
+            restaurants: [
+              {
+                id: RESTAURANT_ID,
+                name: 'Test Restaurant',
+                role: 'manager',
+                is_owner: true,
+              },
+            ],
           }),
         });
       });

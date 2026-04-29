@@ -34,8 +34,7 @@ const ManageMenuItems = () => {
         // Verify user has access (manager, staff, or admin)
         const hasAccess = user.is_admin || (user.restaurants && user.restaurants.some(r => String(r.id) === String(restaurantId)));
         if (!hasAccess) {
-          const firstId = user.restaurants?.[0]?.id;
-          navigate(firstId ? `/restaurant/${firstId}` : '/');
+          navigate('/dashboard');
           return;
         }
         

@@ -2,8 +2,8 @@ import { Capacitor } from '@capacitor/core';
 import { CapacitorHttp } from '@capacitor/core';
 
 const getBaseUrl = () => {
-  // Check if running locally
-  if (window.location.hostname === 'localhost') {
+  const host = window.location.hostname;
+  if (host === 'localhost' || host === '127.0.0.1') {
     return 'http://localhost:8000';
   }
   
@@ -77,6 +77,7 @@ const clearAuthData = () => {
   localStorage.removeItem('email');
   localStorage.removeItem('restaurant_id');
   localStorage.removeItem('restaurant_role');
+  localStorage.removeItem('restaurants');
   localStorage.removeItem('is_admin');
 };
 
@@ -102,11 +103,36 @@ const getRestaurantRole = () => {
   return localStorage.getItem('restaurant_role');
 };
 
-// Set restaurants list (from auth response)
+// Set restaurants list (from auth response); pass [] to clear
 const setRestaurants = (restaurants) => {
-  if (restaurants && Array.isArray(restaurants)) {
-    localStorage.setItem('restaurants', JSON.stringify(restaurants));
+  if (!Array.isArray(restaurants)) return;
+  localStorage.setItem('restaurants', JSON.stringify(restaurants));
+};
+
+/** Apply restaurant list + current context from /auth login|register|user payload */
+const applyRestaurantsFromAuthPayload = (data) => {
+  const list = data?.restaurants;
+  if (Array.isArray(list) && list.length > 0) {
+    setRestaurants(list);
+    setRestaurantId(list[0].id);
+    setRestaurantRole(list[0].role || 'staff');
+  } else if (data?.restaurantId) {
+    setRestaurants([]);
+    setRestaurantId(data.restaurantId);
+    setRestaurantRole('manager');
+  } else {
+    setRestaurants([]);
+    localStorage.removeItem('restaurant_id');
+    localStorage.removeItem('restaurant_role');
   }
+};
+
+const syncAuthUserFromResponse = (data) => {
+  if (!data) return;
+  setUserRole(!!data.is_admin);
+  setUserName(data.name);
+  setUserEmail(data.email);
+  applyRestaurantsFromAuthPayload(data);
 };
 
 // Get restaurants list
@@ -184,23 +210,9 @@ export const api = {
         throw new Error(errorData?.detail || 'Registration failed');
       }
       
-      // Store token and user data directly
       setAuthToken(response.data.token);
       setUserId(response.data.uid);
-      setUserEmail(response.data.email);
-      setUserName(response.data.name);
-      setUserRole(response.data.is_admin);
-      if (response.data.restaurants && response.data.restaurants.length) {
-        setRestaurants(response.data.restaurants);
-        const first = response.data.restaurants[0];
-        setRestaurantId(first.id);
-        setRestaurantRole(first.role);
-      } else if (response.data.restaurantId) {
-        setRestaurantId(response.data.restaurantId);
-        setRestaurantRole('manager');
-      }
-      
-      // Trigger auth change event
+      syncAuthUserFromResponse(response.data);
       triggerAuthChange();
       
       return response.data;
@@ -233,23 +245,9 @@ export const api = {
       
       console.log('Login successful, storing token and user data');
       
-      // Store token and user data directly
       setAuthToken(response.data.token);
       setUserId(response.data.uid);
-      setUserEmail(response.data.email);
-      setUserName(response.data.name);
-      setUserRole(response.data.is_admin);
-      if (response.data.restaurants && response.data.restaurants.length) {
-        setRestaurants(response.data.restaurants);
-        const first = response.data.restaurants[0];
-        setRestaurantId(first.id);
-        setRestaurantRole(first.role);
-      } else if (response.data.restaurantId) {
-        setRestaurantId(response.data.restaurantId);
-        setRestaurantRole('manager');
-      }
-      
-      // Trigger auth change event
+      syncAuthUserFromResponse(response.data);
       triggerAuthChange();
       
       return response.data;
@@ -304,20 +302,7 @@ export const api = {
         throw new Error(response.data?.detail || 'Failed to get user data');
       }
       
-      // Store user data
-      setUserRole(response.data.is_admin);
-      setUserName(response.data.name);
-      setUserEmail(response.data.email);
-      if (response.data.restaurants && response.data.restaurants.length) {
-        setRestaurants(response.data.restaurants);
-        const first = response.data.restaurants[0];
-        setRestaurantId(first.id);
-        setRestaurantRole(first.role);
-      } else if (response.data.restaurantId) {
-        setRestaurantId(response.data.restaurantId);
-        setRestaurantRole(response.data.restaurantRole || 'manager');
-      }
-      
+      syncAuthUserFromResponse(response.data);
       return response.data;
     } catch (error) {
       console.error('Error getting current user:', error);
@@ -437,13 +422,6 @@ export const api = {
   // Restaurant management methods
   createRestaurant: async (restaurantData) => {
     try {
-      // Add owner_uid to restaurant data
-      const uid = getUserId();
-      const enrichedData = {
-        ...restaurantData,
-        owner_uid: uid
-      };
-      
       const response = await httpRequest({
         method: 'POST',
         url: `${BASE_URL}/restaurants/`,
@@ -451,16 +429,30 @@ export const api = {
           'Content-Type': 'application/json',
           'Accept': 'application/json'
         },
-        data: enrichedData
+        data: restaurantData
       });
       
       if (response.status !== 200) {
         throw new Error(response.data?.detail || 'Failed to create restaurant');
       }
       
-      // Store the restaurant ID
       if (response.data.id) {
-        setRestaurantId(response.data.id);
+        try {
+          const sync = await httpRequest({
+            method: 'GET',
+            url: `${BASE_URL}/auth/user`,
+            headers: { Accept: 'application/json' },
+          });
+          if (sync.status === 200) {
+            syncAuthUserFromResponse(sync.data);
+          } else {
+            setRestaurantId(response.data.id);
+            setRestaurantRole('manager');
+          }
+        } catch {
+          setRestaurantId(response.data.id);
+          setRestaurantRole('manager');
+        }
         triggerAuthChange();
       }
       
@@ -490,6 +482,36 @@ export const api = {
       return response.data;
     } catch (error) {
       console.error('Error updating restaurant:', error);
+      throw error;
+    }
+  },
+
+  deleteRestaurant: async (restaurantId) => {
+    try {
+      const response = await httpRequest({
+        method: 'DELETE',
+        url: `${BASE_URL}/restaurants/${restaurantId}`,
+        headers: { Accept: 'application/json' },
+      });
+      if (response.status !== 200) {
+        throw new Error(response.data?.detail || 'Failed to delete restaurant');
+      }
+      try {
+        const sync = await httpRequest({
+          method: 'GET',
+          url: `${BASE_URL}/auth/user`,
+          headers: { Accept: 'application/json' },
+        });
+        if (sync.status === 200) {
+          syncAuthUserFromResponse(sync.data);
+        }
+      } catch {
+        /* ignore */
+      }
+      triggerAuthChange();
+      return response.data;
+    } catch (error) {
+      console.error('Error deleting restaurant:', error);
       throw error;
     }
   },

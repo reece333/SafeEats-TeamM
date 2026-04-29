@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams, useNavigate, Link } from 'react-router-dom';
 import { Capacitor } from '@capacitor/core';
 import { Toast } from '@capacitor/toast';
 import { api } from '../../services/api';
@@ -72,6 +72,7 @@ const RestaurantPage = () => {
   const [deleteSuccessMessage, setDeleteSuccessMessage] = useState('');
   const [showItemsAddedMessage, setShowItemsAddedMessage] = useState(false);
   const [itemsAddedMessage, setItemsAddedMessage] = useState('');
+  const [showDeleteRestaurantDialog, setShowDeleteRestaurantDialog] = useState(false);
 
   const showToast = async (message) => {
     if (Capacitor.isNativePlatform()) {
@@ -255,6 +256,19 @@ const RestaurantPage = () => {
     }
   };
 
+  const cancelDeleteRestaurant = () => setShowDeleteRestaurantDialog(false);
+
+  const handleDeleteRestaurant = async () => {
+    try {
+      await api.deleteRestaurant(restaurantId);
+      setShowDeleteRestaurantDialog(false);
+      navigate('/dashboard');
+    } catch (error) {
+      await showToast(error.message || 'Failed to delete restaurant');
+      setShowDeleteRestaurantDialog(false);
+    }
+  };
+
   const handleEdit = (menuItemId) => {
     // Store the original item before starting to edit
     const itemToEdit = menuItems.find(item => item.id === menuItemId);
@@ -343,7 +357,13 @@ const RestaurantPage = () => {
   return (
     <div className="max-w-4xl mx-auto p-6 flex flex-col justify-center items-center font-[Roboto_Flex]">
       <style>{styles}</style>
-      
+
+      <div className="w-full mb-4">
+        <Link to="/dashboard" className="text-sm text-[#8DB670] hover:underline">
+          ← My restaurants
+        </Link>
+      </div>
+
       {/* Restaurant Information Section */}
       <div className="w-full bg-white rounded-xl shadow-md p-6 mb-8">
         {restaurantRole === 'staff' && (
@@ -686,6 +706,23 @@ const RestaurantPage = () => {
           </ul>
         )}
       </div>
+
+      {restaurant &&
+        String(restaurant.owner_uid || '') === String(localStorage.getItem('user_id') || '') && (
+          <div className="w-full max-w-4xl mb-8 border border-red-200 bg-red-50 rounded-xl p-6">
+            <h3 className="text-lg font-semibold text-red-900 mb-2">Delete restaurant</h3>
+            <p className="text-sm text-red-800 mb-4">
+              Permanently remove this restaurant, all of its menu items, and team memberships. This cannot be undone.
+            </p>
+            <button
+              type="button"
+              onClick={() => setShowDeleteRestaurantDialog(true)}
+              className="px-4 py-2 rounded-xl text-sm font-medium text-white bg-red-600 hover:bg-red-700"
+            >
+              Delete this restaurant…
+            </button>
+          </div>
+        )}
       
       <button 
         onClick={() => navigate(`/restaurant/${restaurantId}/menu`)}
@@ -714,6 +751,33 @@ const RestaurantPage = () => {
                 className="px-4 py-2 rounded-md shadow-sm text-sm font-medium text-white bg-red-600 hover:bg-red-700"
               >
                 Yes, Delete
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showDeleteRestaurantDialog && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 animate-fadeIn">
+          <div className="bg-white rounded-lg p-6 max-w-md w-full">
+            <h3 className="text-lg font-medium text-gray-900 mb-4">Delete restaurant</h3>
+            <p className="text-gray-600 mb-6">
+              Delete <span className="font-semibold">{restaurant?.name}</span> and all menu data? This cannot be undone.
+            </p>
+            <div className="flex justify-end space-x-3">
+              <button
+                type="button"
+                onClick={cancelDeleteRestaurant}
+                className="px-4 py-2 border border-gray-300 rounded-md shadow-sm text-sm font-medium text-gray-700 bg-white hover:bg-gray-50"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleDeleteRestaurant}
+                className="px-4 py-2 rounded-md shadow-sm text-sm font-medium text-white bg-red-600 hover:bg-red-700"
+              >
+                Yes, delete restaurant
               </button>
             </div>
           </div>
