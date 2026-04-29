@@ -4,6 +4,7 @@ import random
 from models import Restaurant, MenuItem, MenuItemUpdate, BulkMenuUpdate
 from typing import List, Optional
 from auth_routes import verify_token
+from permissions import can_manage_restaurant, can_edit_menu, is_restaurant_owner
 import os
 import json
 from pydantic import BaseModel
@@ -798,6 +799,10 @@ async def create_restaurant(
         ref.child(restaurant_id).set(restaurant_dict)
         print(f"Successfully created restaurant with ID: {restaurant_id}")
 
+        # Add creator as manager in restaurant_members
+        members_ref = db.reference(f"restaurant_members/{restaurant_id}")
+        members_ref.set({user_id: {"role": "manager"}})
+
         # Check if this is the user's first restaurant and update user data
         user_ref = db.reference(f"users/{user_id}")
         user_data = user_ref.get()
@@ -829,19 +834,18 @@ async def get_restaurants(token_data: dict = Depends(verify_token)):
         if not all_restaurants:
             return []
 
-        # Admins can see all restaurants, others only see their own
+        # Admins see all; others see restaurants where they are owner or in restaurant_members
+        members_by_restaurant = db.reference("restaurant_members").get() or {}
         if is_admin:
-            # Return all restaurants for admins
             restaurants = [
-                {"id": str(restaurant_id), **restaurant_data}
-                for restaurant_id, restaurant_data in all_restaurants.items()
+                {"id": str(rid), **rdata}
+                for rid, rdata in all_restaurants.items()
             ]
         else:
-            # Filter restaurants by owner_uid for regular users
             restaurants = [
-                {"id": str(restaurant_id), **restaurant_data}
-                for restaurant_id, restaurant_data in all_restaurants.items()
-                if restaurant_data.get("owner_uid") == user_id
+                {"id": str(rid), **rdata}
+                for rid, rdata in all_restaurants.items()
+                if rdata.get("owner_uid") == user_id or (rid in members_by_restaurant and user_id in members_by_restaurant.get(rid, {}))
             ]
 
         return restaurants
@@ -870,8 +874,8 @@ async def get_restaurant(restaurant_id: str, token_data: dict = Depends(verify_t
                 status_code=404, detail=f"Restaurant {restaurant_id} not found"
             )
 
-        # Verify ownership or admin status
-        if restaurant_data.get("owner_uid") != user_id and not is_admin:
+        # Verify access: manager, staff, or admin (any role can view)
+        if not can_edit_menu(db, user_id, restaurant_id, is_admin):
             raise HTTPException(
                 status_code=403,
                 detail="You don't have permission to access this restaurant",
@@ -911,8 +915,8 @@ async def update_restaurant(
                 status_code=404, detail=f"Restaurant {restaurant_id} not found"
             )
 
-        # Verify ownership or admin status
-        if restaurant_data.get("owner_uid") != user_id and not is_admin:
+        # Only manager (or admin) can update restaurant
+        if not can_manage_restaurant(db, user_id, restaurant_id, is_admin):
             raise HTTPException(
                 status_code=403,
                 detail="You don't have permission to modify this restaurant",
@@ -932,13 +936,84 @@ async def update_restaurant(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@router.delete("/restaurants/{restaurant_id}")
+async def delete_restaurant(
+    restaurant_id: str, token_data: dict = Depends(verify_token)
+):
+    """Remove a restaurant and its menu items and team data. Owner only (owner_uid)."""
+    try:
+        user_id = token_data.get("uid")
+        if not user_id:
+            raise HTTPException(status_code=401, detail="Invalid user token")
+
+        restaurant_ref = db.reference(f"restaurants/{restaurant_id}")
+        restaurant_data = restaurant_ref.get()
+
+        if not restaurant_data:
+            raise HTTPException(
+                status_code=404, detail=f"Restaurant {restaurant_id} not found"
+            )
+
+        if not is_restaurant_owner(db, user_id, restaurant_id):
+            raise HTTPException(
+                status_code=403,
+                detail="Only the restaurant owner can delete this restaurant",
+            )
+
+        menu_root = db.reference("menu_items")
+        all_items = menu_root.get() or {}
+        if isinstance(all_items, dict):
+            for item_id, item_data in list(all_items.items()):
+                if isinstance(item_data, dict) and item_data.get(
+                    "restaurant_id"
+                ) == restaurant_id:
+                    db.reference(f"menu_items/{item_id}").delete()
+
+        db.reference(f"restaurant_members/{restaurant_id}").delete()
+        restaurant_ref.delete()
+
+        user_ref = db.reference(f"users/{user_id}")
+        user_data = user_ref.get() or {}
+        if user_data.get("restaurant_id") == restaurant_id:
+            user_ref.child("restaurant_id").delete()
+
+        return {"message": f"Restaurant {restaurant_id} deleted"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"Error deleting restaurant: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 # Menu item routes remain largely the same but now check for admin status too
 @router.post("/restaurants/{restaurant_id}/menu")
 async def add_menu_item(
     restaurant_id: str, menu_item: MenuItem, token_data: dict = Depends(verify_token)
 ):
     try:
-        _, _, _ = await _authorize_restaurant_access(restaurant_id, token_data)
+        # Extract user ID from token
+        user_id = token_data.get("uid")
+        if not user_id:
+            raise HTTPException(status_code=401, detail="Invalid user token")
+
+        # Check if user is admin
+        is_admin = await check_admin_status(token_data)
+
+        # Verify restaurant exists
+        restaurant_ref = db.reference(f"restaurants/{restaurant_id}")
+        restaurant_data = restaurant_ref.get()
+
+        if not restaurant_data:
+            raise HTTPException(
+                status_code=404, detail=f"Restaurant {restaurant_id} not found"
+            )
+
+        # Manager or staff (or admin) can add menu items
+        if not can_edit_menu(db, user_id, restaurant_id, is_admin):
+            raise HTTPException(
+                status_code=403,
+                detail="You don't have permission to modify this restaurant's menu",
+            )
 
         # Validate allergens and dietary categories
         invalid_allergens = set(menu_item.allergens) - VALID_ALLERGENS
@@ -987,7 +1062,29 @@ async def get_menu_items(
     token_data: dict = Depends(verify_token),
 ):
     try:
-        restaurant_data, _, _ = await _authorize_restaurant_access(restaurant_id, token_data)
+        # Extract user ID from token
+        user_id = token_data.get("uid")
+        if not user_id:
+            raise HTTPException(status_code=401, detail="Invalid user token")
+
+        # Check if user is admin
+        is_admin = await check_admin_status(token_data)
+
+        # Verify restaurant exists
+        restaurant_ref = db.reference(f"restaurants/{restaurant_id}")
+        restaurant_data = restaurant_ref.get()
+
+        if not restaurant_data:
+            raise HTTPException(
+                status_code=404, detail=f"Restaurant {restaurant_id} not found"
+            )
+
+        # Manager or staff (or admin) can view menu
+        if not can_edit_menu(db, user_id, restaurant_id, is_admin):
+            raise HTTPException(
+                status_code=403,
+                detail="You don't have permission to access this restaurant's menu",
+            )
 
         # Get all menu items for the restaurant
         menu_ref = db.reference("menu_items")
@@ -1054,9 +1151,25 @@ async def get_menu_items(
 
 
 @router.put("/restaurants/{restaurant_id}/menu/{menu_item_id}")
-async def update_menu_item(restaurant_id: str, menu_item_id: str, menu_item: MenuItemUpdate, token_data: dict = Depends(verify_token)):
+async def update_menu_item(
+    restaurant_id: str, menu_item_id: str, menu_item: MenuItem, token_data: dict = Depends(verify_token)
+):
     try:
-        await _authorize_restaurant_access(restaurant_id, token_data)
+        user_id = token_data.get("uid")
+        if not user_id:
+            raise HTTPException(status_code=401, detail="Invalid user token")
+        is_admin = await check_admin_status(token_data)
+        if not can_edit_menu(db, user_id, restaurant_id, is_admin):
+            raise HTTPException(status_code=403, detail="You don't have permission to edit this menu")
+
+        # Verify restaurant exists
+        restaurant_ref = db.reference(f"restaurants/{restaurant_id}")
+        restaurant_data = restaurant_ref.get()
+
+        if not restaurant_data:
+            raise HTTPException(
+                status_code=404, detail=f"Restaurant {restaurant_id} not found"
+            )
 
         # Verify menu item exists and belongs to the restaurant
         menu_ref = db.reference(f"menu_items/{menu_item_id}")
@@ -1295,8 +1408,17 @@ async def bulk_update_menu_items(
 
 
 @router.delete("/restaurants/{restaurant_id}/menu/{menu_item_id}")
-async def delete_menu_item(restaurant_id: str, menu_item_id: str):
+async def delete_menu_item(
+    restaurant_id: str, menu_item_id: str, token_data: dict = Depends(verify_token)
+):
     try:
+        user_id = token_data.get("uid")
+        if not user_id:
+            raise HTTPException(status_code=401, detail="Invalid user token")
+        is_admin = await check_admin_status(token_data)
+        if not can_edit_menu(db, user_id, restaurant_id, is_admin):
+            raise HTTPException(status_code=403, detail="You don't have permission to edit this menu")
+
         # Verify restaurant exists
         restaurant_ref = db.reference(f"restaurants/{restaurant_id}")
         restaurant_data = restaurant_ref.get()

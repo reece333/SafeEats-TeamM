@@ -68,10 +68,10 @@ const ManageMenuItems = () => {
           return;
         }
         
-        // Verify user has access to this restaurant
-        const hasAccess = user.is_admin || user.restaurantId === restaurantId;
+        // Verify user has access (manager, staff, or admin)
+        const hasAccess = user.is_admin || (user.restaurants && user.restaurants.some(r => String(r.id) === String(restaurantId)));
         if (!hasAccess) {
-          navigate(`/restaurant/${user.restaurantId || ''}`);
+          navigate('/dashboard');
           return;
         }
         
