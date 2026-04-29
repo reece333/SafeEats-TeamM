@@ -1,20 +1,46 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { api } from '../../services/api';
 
 const MAX_SIZE_BYTES = 5 * 1024 * 1024; // 5MB
 const ACCEPTED_TYPES = ['image/jpeg', 'image/png', 'image/webp'];
 
-const ImageUpload = ({ menuItemId, initialImageUrl, onImageChange }) => {
+// Backend returns 1-hour Firebase signed URLs. If the URL expires while the
+// page is open we ask the parent to refetch the menu so a fresh URL is
+// generated server-side. Cap retries so a genuinely broken blob can't loop.
+const MAX_IMAGE_LOAD_RETRIES = 1;
+
+const ImageUpload = ({ menuItemId, initialImageUrl, onImageChange, onImageError }) => {
   const [previewUrl, setPreviewUrl] = useState(initialImageUrl || '');
   const [error, setError] = useState('');
   const [isDragging, setIsDragging] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
   const [isDeleting, setIsDeleting] = useState(false);
+  const [hasLoadFailed, setHasLoadFailed] = useState(false);
+  const loadRetryCountRef = useRef(0);
 
   useEffect(() => {
     setPreviewUrl(initialImageUrl || '');
+    // A new URL arriving from the parent (e.g. after a menu refetch) means we
+    // should give image loading a fresh chance.
+    setHasLoadFailed(false);
+    loadRetryCountRef.current = 0;
   }, [initialImageUrl]);
+
+  const handleImageLoadError = useCallback(() => {
+    if (loadRetryCountRef.current >= MAX_IMAGE_LOAD_RETRIES) {
+      // Already retried; show placeholder so the user isn't staring at a
+      // broken-image icon while we keep failing.
+      setHasLoadFailed(true);
+      return;
+    }
+    loadRetryCountRef.current += 1;
+    if (typeof onImageError === 'function') {
+      onImageError();
+    } else {
+      setHasLoadFailed(true);
+    }
+  }, [onImageError]);
 
   const validateFile = (file) => {
     if (!file) {
@@ -153,12 +179,13 @@ const ImageUpload = ({ menuItemId, initialImageUrl, onImageChange }) => {
           className="hidden"
         />
 
-        {previewUrl ? (
+        {previewUrl && !hasLoadFailed ? (
           <div className="flex flex-col items-center">
             <img
               src={previewUrl}
               alt="Menu item"
               className="w-32 h-32 object-cover rounded-md mb-2 shadow-sm"
+              onError={handleImageLoadError}
             />
             <p className="text-xs text-gray-600 mb-1">
               Tap or drop a new image to replace this photo.
@@ -167,9 +194,13 @@ const ImageUpload = ({ menuItemId, initialImageUrl, onImageChange }) => {
         ) : (
           <div className="flex flex-col items-center text-sm text-gray-600">
             <span className="text-2xl mb-1">📷</span>
-            <p className="font-medium mb-1">Drag & drop an image</p>
+            <p className="font-medium mb-1">
+              {hasLoadFailed ? 'Image unavailable' : 'Drag & drop an image'}
+            </p>
             <p className="text-xs">
-              or <span className="underline">click to browse</span>
+              {hasLoadFailed
+                ? 'Click to upload a new photo.'
+                : <>or <span className="underline">click to browse</span></>}
             </p>
             <p className="mt-2 text-[11px] text-gray-500">
               JPEG, PNG, or WebP, up to 5MB.

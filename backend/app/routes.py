@@ -1,5 +1,4 @@
 from fastapi import APIRouter, HTTPException, Depends, UploadFile, File, Form, status
-from fastapi.responses import JSONResponse
 from firebase_admin import auth, db, storage
 import random
 from models import Restaurant, MenuItem, MenuItemUpdate, BulkMenuUpdate
@@ -81,6 +80,72 @@ def _is_timeout_error(error: Exception) -> bool:
     return any(token in text for token in ("deadline exceeded", "timeout", "timed out"))
 
 
+def _classify_genai_error(error: Exception) -> tuple:
+    """Map a Google generative AI exception to (http_status, user_facing_detail).
+
+    The goal is to surface actionable messages to the UI instead of
+    opaque 500/504 responses. Falls back to a generic "service unavailable"
+    so callers can always present something useful.
+    """
+    if _is_timeout_error(error):
+        return (
+            504,
+            "The AI service took too long to read your menu. "
+            "Try a smaller or clearer file, or add items manually below.",
+        )
+
+    try:
+        from google.api_core import exceptions as gax_exceptions  # type: ignore
+    except Exception:
+        gax_exceptions = None  # type: ignore
+
+    if gax_exceptions is not None:
+        if isinstance(error, gax_exceptions.ResourceExhausted):
+            return (
+                503,
+                "AI ingestion quota or credits have been exhausted. "
+                "Please try again later, or add items manually below.",
+            )
+        if isinstance(error, (gax_exceptions.PermissionDenied, gax_exceptions.Unauthenticated)):
+            return (
+                503,
+                "The AI service is not configured correctly on the server. "
+                "Please add items manually below.",
+            )
+        if isinstance(error, gax_exceptions.InvalidArgument):
+            return (
+                400,
+                "The AI service could not process this file. "
+                "Try a clearer image or PDF, or add items manually below.",
+            )
+
+    text = str(error).lower()
+    if any(token in text for token in ("429", "quota", "credits", "billing", "rate limit")):
+        return (
+            503,
+            "AI ingestion quota or credits have been exhausted. "
+            "Please try again later, or add items manually below.",
+        )
+    if any(token in text for token in ("permission", "api_key", "api key", "unauthenticated", "401", "403")):
+        return (
+            503,
+            "The AI service is not configured correctly on the server. "
+            "Please add items manually below.",
+        )
+    if any(token in text for token in ("safety", "blocked", "policy")):
+        return (
+            422,
+            "The AI service refused to process this file due to content policy. "
+            "Please add items manually below.",
+        )
+
+    return (
+        502,
+        "The AI service is temporarily unavailable. "
+        "Please try again later, or add items manually below.",
+    )
+
+
 VALID_ALLERGENS = {
     "milk",
     "eggs",
@@ -136,6 +201,24 @@ def _normalize_menu_item_record(item_id: str, item_data: dict, restaurant_id: st
     normalized.setdefault("allergens", [])
     normalized.setdefault("dietaryCategories", [])
     return normalized
+
+
+def _best_effort_delete_blob(image_path: Optional[str], context: str = "") -> None:
+    """Delete an object from Firebase Cloud Storage, swallowing failures.
+
+    Used by lifecycle cleanup paths (image replace, menu item delete, image
+    delete) where storage cleanup must not block the primary DB operation.
+    Failures are logged so we still notice if the bucket is unhealthy.
+    """
+    if not image_path:
+        return
+    try:
+        bucket_name = os.getenv("FIREBASE_STORAGE_BUCKET")
+        bucket = storage.bucket(bucket_name) if bucket_name else storage.bucket()
+        bucket.blob(image_path).delete()
+    except Exception as storage_error:
+        suffix = f" ({context})" if context else ""
+        print(f"Error deleting image blob {image_path}{suffix}: {storage_error}")
 
 
 def _merge_tag_updates(existing_values: List[str], additions: List[str], removals: List[str]) -> List[str]:
@@ -253,20 +336,29 @@ async def parse_ingredients_ai(
                 try:
                     response = model.generate_content(prompt)
                 except Exception as e:
-                    if _is_timeout_error(e):
-                        return JSONResponse(status_code=504, content={"error": "upstream_timeout"})
-                    raise
+                    # Translate known upstream failures into HTTPExceptions with a
+                    # useful message so the frontend can surface them to the user.
+                    status_code, detail = _classify_genai_error(e)
+                    raise HTTPException(status_code=status_code, detail=detail)
                 if response and getattr(response, "text", None):
                     break
+            except HTTPException:
+                raise
             except Exception as e:
                 last_error = e
                 continue
 
         if response is None or not getattr(response, "text", None):
-            err_msg = "Model not available or failed to generate. "
-            if last_error:
-                err_msg += str(last_error)
-            raise HTTPException(status_code=500, detail=err_msg)
+            if last_error is not None:
+                status_code, detail = _classify_genai_error(last_error)
+                raise HTTPException(status_code=status_code, detail=detail)
+            raise HTTPException(
+                status_code=503,
+                detail=(
+                    "The AI service is temporarily unavailable. "
+                    "Please try again later, or set allergens manually."
+                ),
+            )
         raw_text = response.text
 
         try:
@@ -325,9 +417,8 @@ async def parse_ingredients_ai(
         raise
     except Exception as e:
         print(f"AI parse error: {str(e)}")
-        raise HTTPException(
-            status_code=500, detail="Failed to parse ingredients with AI"
-        )
+        status_code, detail = _classify_genai_error(e)
+        raise HTTPException(status_code=status_code, detail=detail)
 
 
 def _ensure_genai_configured() -> None:
@@ -488,9 +579,13 @@ async def ingest_menu_file(  # 1. Renamed for clarity
                 request_options=RequestOptions(timeout=90),
             )
         except Exception as e:
-            if _is_timeout_error(e):
-                return JSONResponse(status_code=504, content={"error": "upstream_timeout"})
-            raise
+            # File-level extraction is mandatory: without it we have nothing to return.
+            # Translate upstream errors into a clean HTTPException so the frontend can
+            # display an actionable message (quota exceeded, timeout, etc.) instead of
+            # a generic 500.
+            print(f"Ingest file extraction error: {str(e)}")
+            status_code, detail = _classify_genai_error(e)
+            raise HTTPException(status_code=status_code, detail=detail)
         raw_text = response.text or ""
 
         try:
@@ -507,9 +602,24 @@ async def ingest_menu_file(  # 1. Renamed for clarity
         if not isinstance(items, list):
             items = []
 
-        # --- NO CHANGES NEEDED BELOW THIS LINE ---
-        # This entire section processes the *text* extracted by the first
-        # AI call, so it's completely independent of the original file type.
+        # The per-item allergen/dietary classifier model is reused for every item,
+        # so build it once outside the loop instead of re-instantiating it each time.
+        _ensure_genai_configured()
+        parse_model_name = _select_model_name("parse")
+        parse_model = genai.GenerativeModel(
+            model_name=parse_model_name,
+            generation_config={
+                "temperature": 0,
+                "response_mime_type": "application/json",
+            },
+        )
+
+        # If per-item AI parsing breaks midway (e.g. quota mid-import), stop calling
+        # the API for the rest of the items but still return everything we extracted
+        # so the user can finish tagging manually. This implements the spec's
+        # "Graceful AI Degradation" requirement.
+        per_item_ai_disabled = False
+        per_item_ai_error_logged = False
 
         normalized_items = []
         for item in items:
@@ -535,21 +645,6 @@ async def ingest_menu_file(  # 1. Renamed for clarity
             else:
                 # Add a fallback in case the AI returned a single string by mistake
                 ingredients_text = str(ingredients_list).strip()
-
-            # Reuse the same parsing pipeline by calling the model once more for ingredients
-            ai_parse_request = ParseIngredientsRequest(ingredients=ingredients_text)
-            # Inline invocation of the same logic as parse_ingredients_ai
-            # Configure and select model
-            _ensure_genai_configured()
-            # Use a lighter, cheaper model for per-item parsing/classification.
-            model_name_local = _select_model_name("parse")
-            model_local = genai.GenerativeModel(
-                model_name=model_name_local,
-                generation_config={
-                    "temperature": 0,
-                    "response_mime_type": "application/json",
-                },
-            )
             ing_prompt = (
                 "You are an expert food safety and dietary attribute extractor. Your task is to analyze a free-text ingredient list and return a single, strict JSON object.\n"
                 "Do not provide any preamble, explanation, or any text other than the JSON object itself.\n\n"
@@ -585,28 +680,42 @@ async def ingest_menu_file(  # 1. Renamed for clarity
                 "* Normalize all synonyms to the allowed IDs (e.g., 'soya' -> 'soybeans', 'pecans' -> 'tree_nuts', 'parmesan' -> 'milk').\n"
                 "* If no attributes for a category are found, output an empty array `[]` for that key.\n\n"
                 "---"
-                f"Text to analyze: {ai_parse_request.ingredients}"
+                f"Text to analyze: {ingredients_text}"
             )
-            try:
-                ai_resp = model_local.generate_content(
-                    ing_prompt,
-                    request_options=RequestOptions(timeout=30),
-                )
-            except Exception as e:
-                if _is_timeout_error(e):
-                    return JSONResponse(status_code=504, content={"error": "upstream_timeout"})
-                raise
-            ai_raw = ai_resp.text or "{}"
-            try:
-                ai_parsed = json.loads(ai_raw)
-            except Exception:
-                s = ai_raw.find("{")
-                e = ai_raw.rfind("}")
-                ai_parsed = (
-                    json.loads(ai_raw[s : e + 1])
-                    if s != -1 and e != -1 and e > s
-                    else {}
-                )
+
+            allergens: List[str] = []
+            dietary: List[str] = []
+            ai_parsed: dict = {}
+
+            if not per_item_ai_disabled:
+                try:
+                    ai_resp = parse_model.generate_content(
+                        ing_prompt,
+                        request_options=RequestOptions(timeout=30),
+                    )
+                    ai_raw = ai_resp.text or "{}"
+                    try:
+                        ai_parsed = json.loads(ai_raw)
+                    except Exception:
+                        s = ai_raw.find("{")
+                        e = ai_raw.rfind("}")
+                        ai_parsed = (
+                            json.loads(ai_raw[s : e + 1])
+                            if s != -1 and e != -1 and e > s
+                            else {}
+                        )
+                except Exception as per_item_error:
+                    # Don't fail the whole import on a per-item AI error.
+                    # Disable further AI calls for this request and let the user
+                    # tag remaining items manually (graceful AI degradation).
+                    per_item_ai_disabled = True
+                    if not per_item_ai_error_logged:
+                        print(
+                            f"Per-item AI parsing failed; falling back to manual "
+                            f"tagging for remaining items: {per_item_error}"
+                        )
+                        per_item_ai_error_logged = True
+                    ai_parsed = {}
 
             # Validate ids
             valid_allergens = {
@@ -662,9 +771,9 @@ async def ingest_menu_file(  # 1. Renamed for clarity
     except HTTPException:
         raise
     except Exception as e:
-        # 8. Update log/error messages
         print(f"Ingest file error: {str(e)}")
-        raise HTTPException(status_code=500, detail="Failed to ingest menu file")
+        status_code, detail = _classify_genai_error(e)
+        raise HTTPException(status_code=status_code, detail=detail)
 
 
 @router.post("/restaurants/")
@@ -895,6 +1004,11 @@ async def get_menu_items(
         ]
 
         # Attach short-lived signed image URLs for any items that have an image path.
+        # image_path is the long-term source of truth; image_url here is a
+        # transient 1h presigned URL regenerated on each menu fetch. The frontend
+        # treats this endpoint as the refresh mechanism: when an <img> fails to
+        # load (e.g. the URL expired while the page sat open), it just refetches
+        # the menu list rather than calling a dedicated single-item endpoint.
         bucket_name = os.getenv("FIREBASE_STORAGE_BUCKET")
         bucket = storage.bucket(bucket_name) if bucket_name else storage.bucket()
 
@@ -1016,7 +1130,10 @@ async def duplicate_menu_item(
             "restaurant_id": restaurant_id,
             "archived": False,
         }
+        # Duplicates start without an image so they don't share a storage object
+        # with the original (which would cause both to break if either is deleted).
         duplicated_menu_item.pop("image_url", None)
+        duplicated_menu_item.pop("image_path", None)
 
         db.reference("menu_items").child(new_menu_item_id).set(duplicated_menu_item)
         return duplicated_menu_item
@@ -1204,6 +1321,14 @@ async def delete_menu_item(restaurant_id: str, menu_item_id: str):
                 detail=f"Menu item {menu_item_id} does not belong to restaurant {restaurant_id}",
             )
 
+        # Best-effort: clean up the associated image blob in Cloud Storage
+        # before the DB record disappears. Failures here are logged but do not
+        # block the menu item deletion.
+        _best_effort_delete_blob(
+            menu_item_data.get("image_path"),
+            context=f"delete_menu_item({menu_item_id})",
+        )
+
         # Delete the menu item
         menu_ref.delete()
 
@@ -1287,6 +1412,10 @@ async def upload_menu_item_image(
         bucket_name = os.getenv("FIREBASE_STORAGE_BUCKET")
         bucket = storage.bucket(bucket_name) if bucket_name else storage.bucket()
 
+        # Capture the prior image path BEFORE we overwrite the record, so we can
+        # clean up the old blob after the new one is safely uploaded.
+        previous_image_path = menu_item_data.get("image_path")
+
         # Build a safe, reasonably unique filename
         original_name = file.filename or "image"
         _, ext = os.path.splitext(original_name)
@@ -1297,16 +1426,27 @@ async def upload_menu_item_image(
         blob = bucket.blob(blob_path)
         blob.upload_from_string(file_bytes, content_type=file.content_type)
 
-        # Generate a short-lived signed URL instead of making the object public
+        # Generate a short-lived signed URL for the immediate UI preview.
+        # NOTE: image_path is the long-term source of truth on the record.
+        # We intentionally do NOT persist image_url because signed URLs expire
+        # (1h); the menu list endpoint regenerates a fresh signed URL on demand
+        # from image_path each time it is requested.
         image_url = blob.generate_signed_url(
             expiration=timedelta(hours=1),
             method="GET",
         )
 
-        # Persist path (and last signed URL for convenience) on the menu item record
-        menu_ref.update({"image_url": image_url, "image_path": blob_path})
+        menu_ref.update({"image_path": blob_path, "image_url": None})
 
-        return {"image_url": image_url}
+        # Replace lifecycle: now that the new blob is safely uploaded and the
+        # DB record points at it, clean up the previous blob (best-effort).
+        if previous_image_path and previous_image_path != blob_path:
+            _best_effort_delete_blob(
+                previous_image_path,
+                context=f"upload_menu_item_image({menu_item_id}) replace",
+            )
+
+        return {"image_url": image_url, "image_path": blob_path}
     except HTTPException:
         raise
     except Exception as e:
@@ -1365,17 +1505,12 @@ async def delete_menu_item_image(
                 detail="You don't have permission to modify this menu item image.",
             )
 
-        image_path = menu_item_data.get("image_path")
-
-        # Best-effort deletion from Cloud Storage if we know the path
-        if image_path:
-            try:
-                bucket_name = os.getenv("FIREBASE_STORAGE_BUCKET")
-                bucket = storage.bucket(bucket_name) if bucket_name else storage.bucket()
-                blob = bucket.blob(image_path)
-                blob.delete()
-            except Exception as storage_error:
-                print(f"Error deleting image blob for menu item {menu_item_id}: {storage_error}")
+        # Best-effort deletion from Cloud Storage; failures are logged but do
+        # not block clearing the DB fields below.
+        _best_effort_delete_blob(
+            menu_item_data.get("image_path"),
+            context=f"delete_menu_item_image({menu_item_id})",
+        )
 
         # Clear image fields on the menu item record
         menu_ref.update({"image_url": None, "image_path": None})

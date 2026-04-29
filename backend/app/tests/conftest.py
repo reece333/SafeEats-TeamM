@@ -36,6 +36,10 @@ def _install_firebase_stubs():
             def __init__(self, data):
                 self.data = data
 
+    # Shared in-memory bucket so blobs persist across blob() calls within
+    # a single test (lets tests inspect uploads / deletions).
+    _bucket_state = {"objects": {}}
+
     class _BlobStub:
         def __init__(self, path):
             self.path = path
@@ -43,9 +47,23 @@ def _install_firebase_stubs():
         def generate_signed_url(self, *args, **kwargs):  # pragma: no cover - simple stub
             return f"https://example.com/{self.path}"
 
+        def upload_from_string(self, data, content_type=None):  # pragma: no cover
+            _bucket_state["objects"][self.path] = {
+                "data": data,
+                "content_type": content_type,
+            }
+
+        def delete(self):  # pragma: no cover
+            _bucket_state["objects"].pop(self.path, None)
+
     class _BucketStub:
         def blob(self, path):  # pragma: no cover - simple stub
             return _BlobStub(path)
+
+        # Test-only accessors for assertions.
+        @property
+        def _objects(self):  # pragma: no cover
+            return _bucket_state["objects"]
 
     class _StorageStub:
         def bucket(self, *args, **kwargs):  # pragma: no cover - simple stub
@@ -204,6 +222,21 @@ def user_auth_header():
 @pytest.fixture
 def admin_auth_header():
     return {"Authorization": "Bearer valid-admin-token"}
+
+
+@pytest.fixture
+def storage_objects():
+    """Reset and yield the in-memory Firebase Storage stub.
+
+    Returns the underlying dict mapping blob_path -> {data, content_type} so
+    tests can assert on uploads/deletes performed by the routes under test.
+    """
+    bucket = app_routes.storage.bucket()
+    bucket._objects.clear()
+    try:
+        yield bucket._objects
+    finally:
+        bucket._objects.clear()
 
 
 

@@ -27,6 +27,7 @@ const MenuItemForm = ({
   initialData = {},
   restaurantOptions,
   onImageChange,
+  onImageError,
 }) => {
   // Use a ref to track if this is the initial render
   const isFirstRender = useRef(true);
@@ -195,7 +196,13 @@ const MenuItemForm = ({
       }));
     } catch (e) {
       console.error('AI ingredient parsing error:', e);
-      setParseError('Could not parse ingredients. Please check the text and try again, or set allergens manually.');
+      const backendDetail = typeof e?.message === 'string' && e.message.trim()
+        ? e.message
+        : '';
+      setParseError(
+        backendDetail ||
+          'Could not parse ingredients. Please check the text and try again, or set allergens manually.'
+      );
     }
   };
 
@@ -307,6 +314,7 @@ const MenuItemForm = ({
               menuItemId={initialData.id}
               initialImageUrl={initialData.image_url}
               onImageChange={onImageChange}
+              onImageError={onImageError}
             />
           ) : (
             <div className="w-64 mr-6">
