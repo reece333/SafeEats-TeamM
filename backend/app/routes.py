@@ -5,7 +5,7 @@ import random
 from models import Restaurant, MenuItem
 from typing import List, Optional
 from auth_routes import verify_token
-from permissions import can_manage_restaurant, can_edit_menu
+from permissions import can_manage_restaurant, can_edit_menu, is_restaurant_owner
 import os
 import json
 from pydantic import BaseModel
@@ -728,6 +728,55 @@ async def update_restaurant(
         raise
     except Exception as e:
         print(f"Error updating restaurant: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.delete("/restaurants/{restaurant_id}")
+async def delete_restaurant(
+    restaurant_id: str, token_data: dict = Depends(verify_token)
+):
+    """Remove a restaurant and its menu items and team data. Owner only (owner_uid)."""
+    try:
+        user_id = token_data.get("uid")
+        if not user_id:
+            raise HTTPException(status_code=401, detail="Invalid user token")
+
+        restaurant_ref = db.reference(f"restaurants/{restaurant_id}")
+        restaurant_data = restaurant_ref.get()
+
+        if not restaurant_data:
+            raise HTTPException(
+                status_code=404, detail=f"Restaurant {restaurant_id} not found"
+            )
+
+        if not is_restaurant_owner(db, user_id, restaurant_id):
+            raise HTTPException(
+                status_code=403,
+                detail="Only the restaurant owner can delete this restaurant",
+            )
+
+        menu_root = db.reference("menu_items")
+        all_items = menu_root.get() or {}
+        if isinstance(all_items, dict):
+            for item_id, item_data in list(all_items.items()):
+                if isinstance(item_data, dict) and item_data.get(
+                    "restaurant_id"
+                ) == restaurant_id:
+                    db.reference(f"menu_items/{item_id}").delete()
+
+        db.reference(f"restaurant_members/{restaurant_id}").delete()
+        restaurant_ref.delete()
+
+        user_ref = db.reference(f"users/{user_id}")
+        user_data = user_ref.get() or {}
+        if user_data.get("restaurant_id") == restaurant_id:
+            user_ref.child("restaurant_id").delete()
+
+        return {"message": f"Restaurant {restaurant_id} deleted"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"Error deleting restaurant: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
 

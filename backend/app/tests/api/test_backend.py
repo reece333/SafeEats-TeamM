@@ -181,3 +181,47 @@ def test_restaurant_menu_delete(client: TestClient, user_auth_header, fake_db):
     resp4j = resp4.json()
     assert resp4.status_code == 200
     assert len(resp4j) == 0
+
+
+def test_owner_can_delete_restaurant(client: TestClient, user_auth_header, fake_db):
+    fake_db.reference("restaurants").set({})
+    r = client.post(
+        "/restaurants/",
+        headers=user_auth_header,
+        json={
+            "name": "To Delete",
+            "phone": "555",
+            "address": "Here",
+            "cuisine_type": "Any",
+        },
+    )
+    assert r.status_code == 200
+    rid = r.json()["id"]
+    d = client.delete(f"/restaurants/{rid}", headers=user_auth_header)
+    assert d.status_code == 200
+    gone = client.get(f"/restaurants/{rid}", headers=user_auth_header)
+    assert gone.status_code == 404
+
+
+def test_non_owner_cannot_delete_restaurant(
+    client: TestClient, user_auth_header, staff_auth_header, fake_db
+):
+    fake_db.reference("restaurants").set({})
+    r = client.post(
+        "/restaurants/",
+        headers=user_auth_header,
+        json={
+            "name": "Owned By User1",
+            "phone": "555",
+            "address": "There",
+            "cuisine_type": "Any",
+        },
+    )
+    rid = r.json()["id"]
+    fake_db.reference(f"restaurant_members/{rid}").set(
+        {"staff1": {"role": "manager"}}
+    )
+    d = client.delete(f"/restaurants/{rid}", headers=staff_auth_header)
+    assert d.status_code == 403
+    still = client.get(f"/restaurants/{rid}", headers=user_auth_header)
+    assert still.status_code == 200

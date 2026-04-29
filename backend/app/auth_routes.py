@@ -90,26 +90,33 @@ async def admin_only(request: Request):
 
 def _get_user_restaurants_with_roles(uid: str, is_admin: bool) -> tuple:
     """
-    Return (restaurant_id_for_default, list of { id, name, role }).
-    restaurant_id is first restaurant for backward compat; restaurants list has role for UI.
+    Return (restaurant_id_for_default, list of { id, name, role, is_owner }).
+    restaurant_id is first entry for backward compat (owned restaurants first, then name).
     """
     all_restaurants = _db().reference("restaurants").get() or {}
     members_by_restaurant = _db().reference("restaurant_members").get() or {}
-    result = []
+    rows = []
     for r_id, r_data in all_restaurants.items():
+        rid = str(r_id)
+        is_owner = r_data.get("owner_uid") == uid
         role = None
-        if r_data.get("owner_uid") == uid:
+        if is_owner:
             role = "manager"
-        elif r_id in members_by_restaurant and uid in members_by_restaurant[r_id]:
-            role = members_by_restaurant[r_id][uid].get("role")  # "manager" or "staff"
+        elif rid in members_by_restaurant and uid in members_by_restaurant[rid]:
+            role = members_by_restaurant[rid][uid].get("role")  # "manager" or "staff"
         if is_admin or role:
-            result.append({
-                "id": str(r_id),
-                "name": r_data.get("name", "Unnamed Restaurant"),
-                "role": role if role else "manager",
-            })
-    default_id = result[0]["id"] if result else None
-    return default_id, result
+            name = r_data.get("name", "Unnamed Restaurant")
+            rows.append(
+                {
+                    "id": rid,
+                    "name": name,
+                    "role": role if role else "manager",
+                    "is_owner": bool(is_owner),
+                }
+            )
+    rows.sort(key=lambda r: (0 if r["is_owner"] else 1, (r["name"] or "").lower()))
+    default_id = rows[0]["id"] if rows else None
+    return default_id, rows
 
 @auth_router.post("/register", response_model=UserResponse)
 async def register_user(user_data: UserRegister):

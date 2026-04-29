@@ -35,3 +35,12 @@ def can_edit_menu(db: Any, uid: str, restaurant_id: str, is_admin: bool) -> bool
     """True if user can add/edit/delete menu items (manager, staff, or admin)."""
     role = get_restaurant_role(db, uid, restaurant_id, is_admin)
     return role in ("manager", "staff")
+
+
+def is_restaurant_owner(db: Any, uid: str, restaurant_id: str) -> bool:
+    """True only if uid matches owner_uid (not inferred from admin or manager role)."""
+    restaurant_ref = db.reference(f"restaurants/{restaurant_id}")
+    restaurant_data = restaurant_ref.get()
+    if not restaurant_data:
+        return False
+    return restaurant_data.get("owner_uid") == uid
