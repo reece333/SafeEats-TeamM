@@ -76,6 +76,7 @@ const clearAuthData = () => {
   localStorage.removeItem('user_name');
   localStorage.removeItem('email');
   localStorage.removeItem('restaurant_id');
+  localStorage.removeItem('restaurant_role');
   localStorage.removeItem('is_admin');
 };
 
@@ -89,6 +90,33 @@ const setRestaurantId = (restaurantId) => {
 // Get restaurant ID
 const getRestaurantId = () => {
   return localStorage.getItem('restaurant_id');
+};
+
+// Set restaurant role for current restaurant (manager | staff)
+const setRestaurantRole = (role) => {
+  if (role) localStorage.setItem('restaurant_role', role);
+};
+
+// Get restaurant role
+const getRestaurantRole = () => {
+  return localStorage.getItem('restaurant_role');
+};
+
+// Set restaurants list (from auth response)
+const setRestaurants = (restaurants) => {
+  if (restaurants && Array.isArray(restaurants)) {
+    localStorage.setItem('restaurants', JSON.stringify(restaurants));
+  }
+};
+
+// Get restaurants list
+const getRestaurantsList = () => {
+  try {
+    const s = localStorage.getItem('restaurants');
+    return s ? JSON.parse(s) : [];
+  } catch {
+    return [];
+  }
 };
 
 // Trigger auth change event - to notify components
@@ -162,9 +190,14 @@ export const api = {
       setUserEmail(response.data.email);
       setUserName(response.data.name);
       setUserRole(response.data.is_admin);
-      
-      if (response.data.restaurantId) {
+      if (response.data.restaurants && response.data.restaurants.length) {
+        setRestaurants(response.data.restaurants);
+        const first = response.data.restaurants[0];
+        setRestaurantId(first.id);
+        setRestaurantRole(first.role);
+      } else if (response.data.restaurantId) {
         setRestaurantId(response.data.restaurantId);
+        setRestaurantRole('manager');
       }
       
       // Trigger auth change event
@@ -206,9 +239,14 @@ export const api = {
       setUserEmail(response.data.email);
       setUserName(response.data.name);
       setUserRole(response.data.is_admin);
-      
-      if (response.data.restaurantId) {
+      if (response.data.restaurants && response.data.restaurants.length) {
+        setRestaurants(response.data.restaurants);
+        const first = response.data.restaurants[0];
+        setRestaurantId(first.id);
+        setRestaurantRole(first.role);
+      } else if (response.data.restaurantId) {
         setRestaurantId(response.data.restaurantId);
+        setRestaurantRole('manager');
       }
       
       // Trigger auth change event
@@ -270,10 +308,14 @@ export const api = {
       setUserRole(response.data.is_admin);
       setUserName(response.data.name);
       setUserEmail(response.data.email);
-      
-      // Update stored restaurant ID if it exists
-      if (response.data.restaurantId) {
+      if (response.data.restaurants && response.data.restaurants.length) {
+        setRestaurants(response.data.restaurants);
+        const first = response.data.restaurants[0];
+        setRestaurantId(first.id);
+        setRestaurantRole(first.role);
+      } else if (response.data.restaurantId) {
         setRestaurantId(response.data.restaurantId);
+        setRestaurantRole(response.data.restaurantRole || 'manager');
       }
       
       return response.data;
@@ -283,6 +325,47 @@ export const api = {
       triggerAuthChange();
       return null;
     }
+  },
+
+  // Update current restaurant context (when user switches restaurant)
+  setCurrentRestaurant: (restaurantId, role) => {
+    setRestaurantId(restaurantId);
+    setRestaurantRole(role || 'staff');
+    triggerAuthChange();
+  },
+
+  getRestaurantRole: () => getRestaurantRole(),
+  getRestaurantsList: () => getRestaurantsList(),
+
+  getRestaurantMembers: async (restaurantId) => {
+    const response = await httpRequest({
+      method: 'GET',
+      url: `${BASE_URL}/auth/restaurants/${restaurantId}/members`,
+      headers: { 'Accept': 'application/json' }
+    });
+    if (response.status !== 200) throw new Error(response.data?.detail || 'Failed to fetch members');
+    return response.data.members;
+  },
+
+  inviteRestaurantMember: async (restaurantId, email, role) => {
+    const response = await httpRequest({
+      method: 'POST',
+      url: `${BASE_URL}/auth/restaurants/${restaurantId}/members`,
+      headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+      data: { email, role }
+    });
+    if (response.status !== 200) throw new Error(response.data?.detail || 'Failed to invite member');
+    return response.data;
+  },
+
+  removeRestaurantMember: async (restaurantId, memberUid) => {
+    const response = await httpRequest({
+      method: 'DELETE',
+      url: `${BASE_URL}/auth/restaurants/${restaurantId}/members/${memberUid}`,
+      headers: { 'Accept': 'application/json' }
+    });
+    if (response.status !== 200) throw new Error(response.data?.detail || 'Failed to remove member');
+    return response.data;
   },
   
   // User management methods (admin only)

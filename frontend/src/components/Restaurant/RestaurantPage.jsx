@@ -44,6 +44,7 @@ const RestaurantPage = () => {
   const [error, setError] = useState('');
   const [editingItemId, setEditingItemId] = useState(null);
   const [originalItem, setOriginalItem] = useState(null);
+  const [restaurantRole, setRestaurantRole] = useState(null); // 'manager' | 'staff' for this restaurant
   
   // Add state for restaurant editing
   const [editingRestaurant, setEditingRestaurant] = useState(false);
@@ -53,6 +54,14 @@ const RestaurantPage = () => {
     phone: '',
     cuisine_type: ''
   });
+  
+  // Team (manager only): members list, invite form
+  const [members, setMembers] = useState([]);
+  const [membersLoading, setMembersLoading] = useState(false);
+  const [inviteEmail, setInviteEmail] = useState('');
+  const [inviteRole, setInviteRole] = useState('staff');
+  const [inviteError, setInviteError] = useState('');
+  const [inviteSuccess, setInviteSuccess] = useState('');
   
   // Add state for confirmation dialog and success messages
   const [showConfirmDialog, setShowConfirmDialog] = useState(false);
@@ -81,6 +90,11 @@ const RestaurantPage = () => {
 
   const fetchRestaurantData = async () => {
     try {
+      const user = await api.getCurrentUser();
+      const role = user?.restaurants?.find(r => String(r.id) === String(restaurantId))?.role;
+      setRestaurantRole(role || null);
+      if (role) api.setCurrentRestaurant(restaurantId, role);
+
       const restaurantData = await api.getRestaurants();
       const restaurant = restaurantData.find(r => String(r.id) === restaurantId);
 
@@ -92,7 +106,6 @@ const RestaurantPage = () => {
 
       setRestaurant(restaurant);
       
-      // Initialize restaurant form data
       setRestaurantFormData({
         name: restaurant.name || '',
         address: restaurant.address || '',
@@ -100,11 +113,21 @@ const RestaurantPage = () => {
         cuisine_type: restaurant.cuisine_type || ''
       });
 
-      // Fetch menu items
       const menuData = await api.getMenuItems(restaurantId);
       setMenuItems(menuData);
 
-    } catch (error) {
+      if (role === 'manager') {
+        setMembersLoading(true);
+        try {
+          const memberList = await api.getRestaurantMembers(restaurantId);
+          setMembers(memberList);
+        } catch {
+          setMembers([]);
+        } finally {
+          setMembersLoading(false);
+        }
+      }
+    } catch (err) {
       setError('Failed to load restaurant information');
       await showToast('Failed to load restaurant information');
     } finally {
@@ -323,6 +346,9 @@ const RestaurantPage = () => {
       
       {/* Restaurant Information Section */}
       <div className="w-full bg-white rounded-xl shadow-md p-6 mb-8">
+        {restaurantRole === 'staff' && (
+          <p className="text-sm text-gray-500 mb-2">You have staff access: you can edit menu items but not restaurant settings.</p>
+        )}
         {editingRestaurant ? (
           <div className="animate-fadeIn">
             <h2 className="text-2xl font-bold mb-4">Edit Restaurant Information</h2>
@@ -391,16 +417,18 @@ const RestaurantPage = () => {
           </div>
         ) : (
           <div className="relative">
-            {/* Edit button in top right corner - Changed from amber to blue */}
-            <button
-              onClick={handleEditRestaurant}
-              className="absolute top-0 right-0 bg-blue-500 text-white p-1.5 rounded-lg hover:bg-blue-600 transition"
-              title="Edit Restaurant Information"
-            >
-              <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
-              </svg>
-            </button>
+            {/* Edit button: manager only */}
+            {restaurantRole === 'manager' && (
+              <button
+                onClick={handleEditRestaurant}
+                className="absolute top-0 right-0 bg-blue-500 text-white p-1.5 rounded-lg hover:bg-blue-600 transition"
+                title="Edit Restaurant Information"
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
+                </svg>
+              </button>
+            )}
             
             <h2 className="text-2xl font-bold mb-2">{restaurant.name}</h2>
             <p className="text-sm text-gray-600 mb-4">
@@ -435,6 +463,87 @@ const RestaurantPage = () => {
           </div>
         )}
       </div>
+
+      {/* Team section: manager only */}
+      {restaurantRole === 'manager' && (
+        <div className="w-full bg-white rounded-xl shadow-md p-6 mb-8">
+          <h3 className="text-xl font-semibold mb-4">Team</h3>
+          {membersLoading ? (
+            <p className="text-gray-500">Loading members…</p>
+          ) : (
+            <>
+              <ul className="space-y-2 mb-4">
+                {members.map((m) => (
+                  <li key={m.uid} className="flex items-center justify-between py-2 border-b border-gray-100">
+                    <span className="text-gray-700">{m.email}</span>
+                    <span className="flex items-center gap-2">
+                      <span className="text-xs px-2 py-0.5 rounded bg-gray-100 text-gray-600">{m.role}</span>
+                      {m.is_owner && <span className="text-xs text-gray-400">(owner)</span>}
+                      {!m.is_owner && (
+                        <button
+                          type="button"
+                          onClick={async () => {
+                            if (!window.confirm(`Remove ${m.email} from this restaurant?`)) return;
+                            try {
+                              await api.removeRestaurantMember(restaurantId, m.uid);
+                              setMembers(members.filter(x => x.uid !== m.uid));
+                              await showToast('Member removed');
+                            } catch (err) {
+                              await showToast(err.message || 'Failed to remove');
+                            }
+                          }}
+                          className="text-red-600 hover:underline text-sm"
+                        >
+                          Remove
+                        </button>
+                      )}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+              <div className="flex flex-wrap items-end gap-2">
+                <input
+                  type="email"
+                  placeholder="Email to invite"
+                  value={inviteEmail}
+                  onChange={(e) => { setInviteEmail(e.target.value); setInviteError(''); setInviteSuccess(''); }}
+                  className="border border-gray-300 rounded-lg px-3 py-2 flex-1 min-w-[180px]"
+                />
+                <select
+                  value={inviteRole}
+                  onChange={(e) => setInviteRole(e.target.value)}
+                  className="border border-gray-300 rounded-lg px-3 py-2"
+                >
+                  <option value="staff">Staff</option>
+                  <option value="manager">Manager</option>
+                </select>
+                <button
+                  type="button"
+                  onClick={async () => {
+                    if (!inviteEmail.trim()) return;
+                    setInviteError('');
+                    setInviteSuccess('');
+                    try {
+                      await api.inviteRestaurantMember(restaurantId, inviteEmail.trim(), inviteRole);
+                      setInviteEmail('');
+                      setInviteSuccess(`${inviteEmail} added as ${inviteRole}`);
+                      const memberList = await api.getRestaurantMembers(restaurantId);
+                      setMembers(memberList);
+                    } catch (err) {
+                      setInviteError(err.message || 'Invite failed');
+                    }
+                  }}
+                  className="bg-[#8DB670] text-white px-4 py-2 rounded-lg hover:bg-[#6c8b55]"
+                >
+                  Invite
+                </button>
+              </div>
+              {inviteError && <p className="text-red-600 text-sm mt-2">{inviteError}</p>}
+              {inviteSuccess && <p className="text-green-600 text-sm mt-2">{inviteSuccess}</p>}
+            </>
+          )}
+        </div>
+      )}
 
       {/* Menu Items Section */}
       <div className="w-full bg-white rounded-xl shadow-md p-6 mb-6">
