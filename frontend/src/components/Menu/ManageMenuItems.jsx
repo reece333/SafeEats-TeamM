@@ -1,7 +1,13 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { api } from '../../services/api';
 import MenuItemForm from './MenuItemForm';
+
+// Mirrors the strategy in RestaurantPage: when a 1h Firebase signed URL
+// expires while the page sits open, the <img onError> handler triggers a
+// full menu refetch so the backend regenerates a fresh URL from image_path.
+// Capped + deduped so a permanently broken blob can't infinite-loop.
+const MAX_IMAGE_REFETCH_ATTEMPTS = 2;
 
 const allergenOptions = [
   { id: 'milk', label: 'Milk' },
@@ -46,6 +52,8 @@ const ManageMenuItems = () => {
   const navigate = useNavigate(); // Hook for navigation
   const lastFormRef = useRef(null); // Reference for the most recently added form element
   const shouldScrollToNew = useRef(false); // Track if we need to scroll after adding a new form
+  const imageRefetchInFlightRef = useRef(false);
+  const imageRefetchAttemptsRef = useRef(0);
 
   // First, check authentication status
   useEffect(() => {
@@ -91,7 +99,24 @@ const ManageMenuItems = () => {
   const refreshMenuItems = async () => {
     const menuResponse = await api.getMenuItems(restaurantId);
     setMenuItems(menuResponse || []);
+    imageRefetchAttemptsRef.current = 0;
   };
+
+  // Triggered when a thumbnail <img> fails to load — usually because its
+  // signed URL expired. Refetch the menu (which mints fresh signed URLs),
+  // dedupe concurrent failures, and cap retries.
+  const handleSignedUrlExpired = useCallback(() => {
+    if (imageRefetchInFlightRef.current) return;
+    if (imageRefetchAttemptsRef.current >= MAX_IMAGE_REFETCH_ATTEMPTS) return;
+    imageRefetchAttemptsRef.current += 1;
+    imageRefetchInFlightRef.current = true;
+    refreshMenuItems().finally(() => {
+      imageRefetchInFlightRef.current = false;
+    });
+    // refreshMenuItems is stable enough here — restaurantId is the only
+    // moving piece and we re-read it from the closure on each invocation.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [restaurantId]);
 
   const visibleMenuItems = menuItems.filter((item) => showArchived || !item.archived);
 
@@ -170,7 +195,18 @@ const ManageMenuItems = () => {
         ? await api.restoreMenuItem(restaurantId, item.id)
         : await api.archiveMenuItem(restaurantId, item.id);
 
-      setMenuItems((prev) => prev.map((entry) => (entry.id === updated.id ? updated : entry)));
+      // Preserve a previously-known fresh signed URL: archive/restore
+      // responses come straight from the DB record, where image_url is
+      // intentionally NOT persisted long-term (signed URLs expire). Without
+      // this preservation, archiving an item would visually drop its
+      // thumbnail until the next full menu refetch.
+      setMenuItems((prev) => prev.map((entry) => {
+        if (entry.id !== updated.id) return entry;
+        return {
+          ...updated,
+          image_url: updated.image_url || entry.image_url,
+        };
+      }));
     } catch (archiveError) {
       setError(archiveError?.message || 'Failed to update menu item status');
     }
@@ -528,6 +564,23 @@ const ManageMenuItems = () => {
                         onChange={() => toggleSelectedItem(item.id)}
                         className="mt-1 h-4 w-4"
                       />
+                      {item.image_url ? (
+                        <img
+                          src={item.image_url}
+                          alt={item.name || 'Menu item photo'}
+                          className="w-20 h-20 object-cover rounded-md shadow-sm flex-shrink-0"
+                          onError={handleSignedUrlExpired}
+                        />
+                      ) : (
+                        <div
+                          className="w-20 h-20 rounded-md flex flex-col items-center justify-center text-gray-400 bg-gray-100 border border-dashed border-gray-300 flex-shrink-0"
+                          aria-label="No photo"
+                          title="No photo for this item"
+                        >
+                          <span className="text-xl leading-none">📷</span>
+                          <span className="text-[10px] mt-1">No photo</span>
+                        </div>
+                      )}
                       <div>
                         <div className="flex items-center gap-2 flex-wrap">
                           <h3 className="text-lg font-semibold">{item.name}</h3>

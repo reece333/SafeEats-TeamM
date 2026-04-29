@@ -22,6 +22,14 @@ var/
 venv/
 .env
 
+# Python virtual environments
+.venv/
+**/.venv/
+venv/
+**/venv/
+__pycache__/
+*.pyc
+
 # React/Node
 node_modules/
 /.pnp

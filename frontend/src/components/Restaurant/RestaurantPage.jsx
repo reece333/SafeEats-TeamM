@@ -1,9 +1,18 @@
+import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { useParams, useNavigate } from 'react-router-dom';
 import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import { Capacitor } from '@capacitor/core';
 import { Toast } from '@capacitor/toast';
 import { api } from '../../services/api';
 import MenuItemForm from '../Menu/MenuItemForm';
+
+// When a Firebase signed URL expires (1h TTL), browsers will fail to load the
+// thumbnail. Rather than adding a per-item refresh endpoint, we just refetch
+// the menu list — the backend regenerates fresh signed URLs from each item's
+// image_path on every GET. We dedupe concurrent refreshes and cap retries so
+// a permanently broken blob can't trigger an infinite refetch loop.
+const MAX_IMAGE_REFETCH_ATTEMPTS = 2;
 
 const allergenOptions = [
   { id: 'milk', label: 'Milk', icon: '🥛' },
@@ -74,6 +83,10 @@ const RestaurantPage = () => {
   const [itemsAddedMessage, setItemsAddedMessage] = useState('');
   const [showDeleteRestaurantDialog, setShowDeleteRestaurantDialog] = useState(false);
 
+  // Refs supporting the signed-URL refetch-on-error strategy.
+  const imageRefetchInFlightRef = useRef(false);
+  const imageRefetchAttemptsRef = useRef(0);
+
   const showToast = async (message) => {
     if (Capacitor.isNativePlatform()) {
       await Toast.show({ text: message, duration: 'short', position: 'bottom' });
@@ -139,6 +152,20 @@ const RestaurantPage = () => {
   // Main effect for loading restaurant data
   useEffect(() => {
     fetchRestaurantData();
+  }, [restaurantId]);
+
+  // Triggered when a thumbnail / preview <img> fails to load — most often
+  // because its 1-hour signed URL has expired. We refetch the menu (which
+  // forces the backend to regenerate fresh signed URLs from image_path),
+  // dedupe concurrent attempts, and cap total retries.
+  const handleSignedUrlExpired = useCallback(() => {
+    if (imageRefetchInFlightRef.current) return;
+    if (imageRefetchAttemptsRef.current >= MAX_IMAGE_REFETCH_ATTEMPTS) return;
+    imageRefetchAttemptsRef.current += 1;
+    imageRefetchInFlightRef.current = true;
+    fetchRestaurantData().finally(() => {
+      imageRefetchInFlightRef.current = false;
+    });
   }, [restaurantId]);
 
   // Separate useEffect for handling success messages from localStorage
@@ -608,12 +635,16 @@ const RestaurantPage = () => {
                                 : '$0.00'
                       }}
                       onImageChange={(newUrl) => {
+                        // Successful upload/delete resets the retry counter so a
+                        // subsequent expiry can trigger a refetch again.
+                        imageRefetchAttemptsRef.current = 0;
                         setMenuItems((prev) =>
                           prev.map((i) =>
                             i.id === item.id ? { ...i, image_url: newUrl } : i
                           )
                         );
                       }}
+                      onImageError={handleSignedUrlExpired}
                     />
                     <div className="flex justify-end space-x-2 mt-4">
                       <button
@@ -656,12 +687,22 @@ const RestaurantPage = () => {
                     </div>
                     
                     <div className="pr-16">
-                      {item.image_url && (
+                      {item.image_url ? (
                         <img
                           src={item.image_url}
                           alt={item.name}
                           className="w-24 h-24 object-cover rounded-md mb-2 shadow-sm"
+                          onError={handleSignedUrlExpired}
                         />
+                      ) : (
+                        <div
+                          className="w-24 h-24 rounded-md mb-2 flex flex-col items-center justify-center text-gray-400 bg-gray-100 border border-dashed border-gray-300"
+                          aria-label="No photo"
+                          title="No photo for this item"
+                        >
+                          <span className="text-2xl leading-none">📷</span>
+                          <span className="text-[10px] mt-1">No photo</span>
+                        </div>
                       )}
                       <p className="text-lg font-medium">{item.name}</p>
                       {/* Changed from green to bold dark gray for prices */}
