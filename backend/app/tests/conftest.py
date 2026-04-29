@@ -36,16 +36,33 @@ def _install_firebase_stubs():
             def __init__(self, data):
                 self.data = data
 
+    class _BlobStub:
+        def __init__(self, path):
+            self.path = path
+
+        def generate_signed_url(self, *args, **kwargs):  # pragma: no cover - simple stub
+            return f"https://example.com/{self.path}"
+
+    class _BucketStub:
+        def blob(self, path):  # pragma: no cover - simple stub
+            return _BlobStub(path)
+
+    class _StorageStub:
+        def bucket(self, *args, **kwargs):  # pragma: no cover - simple stub
+            return _BucketStub()
+
     firebase_admin = types.SimpleNamespace(
         initialize_app=lambda *a, **k: None,
         credentials=_CredentialsStub,
         auth=_AuthStub(),
         db=None,  # will be patched to FakeDB instance later
+        storage=_StorageStub(),
     )
     sys.modules.setdefault("firebase_admin", firebase_admin)
     sys.modules.setdefault("firebase_admin.auth", firebase_admin.auth)
     sys.modules.setdefault("firebase_admin.db", types.SimpleNamespace())
     sys.modules.setdefault("firebase_admin.credentials", _CredentialsStub)
+    sys.modules.setdefault("firebase_admin.storage", firebase_admin.storage)
 
 
 # Install stubs before importing application modules
