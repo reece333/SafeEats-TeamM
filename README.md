@@ -99,6 +99,6 @@ npm start
 
 
 ## Deployment
-The app is deployed at https://restaurant-allergy-manager.onrender.com. It may take several minutes for the backend to boot up after accessing the site, as we are on the free plan. We made two separate deployments for the project. One runs the backend and the other runs the frontend. I would recommend forking the repository, adding the .env values into Render, then making sure you’re in the correct directories when you install the dependencies for the frontend and the backend. Otherwise, you install and run the build similar to how you run it in your local environment. See the Render documentation for more details. https://render.com/docs
+The app is deployed at https://safeeats-teamm.onrender.com. It may take several minutes for the backend to boot up after accessing the site, as we are on the free plan. We made two separate deployments for the project. One runs the backend and the other runs the frontend. I would recommend forking the repository, adding the .env values into Render, then making sure you’re in the correct directories when you install the dependencies for the frontend and the backend. Otherwise, you install and run the build similar to how you run it in your local environment. See the Render documentation for more details. https://render.com/docs
 
 Adapted from https://github.com/SafeEats-TeamH-Spring-2024-COMP-523/SafeEatsH 
