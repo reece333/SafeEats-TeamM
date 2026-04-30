@@ -166,6 +166,8 @@ const RestaurantPage = () => {
     });
   }, [restaurantId]);
 
+  const visibleMenuItems = menuItems.filter((item) => !item.archived);
+
   // Separate useEffect for handling success messages from localStorage
   useEffect(() => {
     // Check for success message from localStorage after component mounts
@@ -238,7 +240,7 @@ const RestaurantPage = () => {
 
   // Menu item functions
   const confirmDelete = (menuItemId) => {
-    const itemToDelete = menuItems.find(item => item.id === menuItemId);
+    const itemToDelete = visibleMenuItems.find(item => item.id === menuItemId);
     if (!itemToDelete) return;
     
     setItemToDelete(itemToDelete);
@@ -296,7 +298,7 @@ const RestaurantPage = () => {
 
   const handleEdit = (menuItemId) => {
     // Store the original item before starting to edit
-    const itemToEdit = menuItems.find(item => item.id === menuItemId);
+    const itemToEdit = visibleMenuItems.find(item => item.id === menuItemId);
     setOriginalItem(itemToEdit);
   
     // Toggle editing state for this item
@@ -603,14 +605,14 @@ const RestaurantPage = () => {
             Need help adding items? Open “How Do I Add Menu Items?”
           </a>
         </div>
-        {menuItems.length === 0 ? (
+        {visibleMenuItems.length === 0 ? (
           <div className="text-center py-8">
             <p className="text-gray-500 mb-4">No menu items added yet.</p>
             <p className="text-gray-500 mb-6">Add your first items to start building your menu!</p>
           </div>
         ) : (
           <ul className="space-y-4 w-full">
-            {menuItems.map((item, index) => (
+            {visibleMenuItems.map((item, index) => (
               <li key={item.id} className="border rounded-xl p-4 shadow-sm relative">
                 {editingItemId === item.id ? (
                   <div className="animate-fadeIn">
