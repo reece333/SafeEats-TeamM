@@ -603,9 +603,11 @@ async def ingest_menu_file(  # 1. Renamed for clarity
         # 7. The AI call is identical, just using the generic 'model_part'
         try:
             # Use a single-call timeout rather than a long retry chain to keep UX snappy.
+            # 240s is generous enough for large/complex menus that Gemini has
+            # successfully processed before but occasionally needs longer for.
             response = model.generate_content(
                 [prompt, model_part],
-                request_options=RequestOptions(timeout=90),
+                request_options=RequestOptions(timeout=240),
             )
         except Exception as e:
             # File-level extraction is mandatory: without it we have nothing to return.
