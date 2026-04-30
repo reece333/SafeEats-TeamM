@@ -82,14 +82,29 @@ def _is_timeout_error(error: Exception) -> bool:
     return any(token in text for token in ("deadline exceeded", "timeout", "timed out"))
 
 
-def _classify_genai_error(error: Exception) -> tuple:
+def _classify_genai_error(error: Exception, context: str = "file") -> tuple:
     """Map a Google generative AI exception to (http_status, user_facing_detail).
 
     The goal is to surface actionable messages to the UI instead of
     opaque 500/504 responses. Falls back to a generic "service unavailable"
     so callers can always present something useful.
+
+    The ``context`` argument controls the wording so we don't tell users to
+    "try a clearer image" when they're parsing free-text ingredients:
+      - "file" (default): for /ai/ingest-menu (image/PDF upload).
+      - "text": for /ai/parse-ingredients (pasted ingredient list).
+    Every message keeps the word "manually" so contracts that assert on
+    that token (see test_errors_timeouts.py) continue to hold.
     """
+    is_text = context == "text"
+
     if _is_timeout_error(error):
+        if is_text:
+            return (
+                504,
+                "The AI service took too long to read the ingredient list. "
+                "Please try again, or set allergens manually below.",
+            )
         return (
             504,
             "The AI service took too long to read your menu. "
@@ -103,18 +118,36 @@ def _classify_genai_error(error: Exception) -> tuple:
 
     if gax_exceptions is not None:
         if isinstance(error, gax_exceptions.ResourceExhausted):
+            if is_text:
+                return (
+                    503,
+                    "AI parsing quota or credits have been exhausted. "
+                    "Please try again later, or set allergens manually below.",
+                )
             return (
                 503,
                 "AI ingestion quota or credits have been exhausted. "
                 "Please try again later, or add items manually below.",
             )
         if isinstance(error, (gax_exceptions.PermissionDenied, gax_exceptions.Unauthenticated)):
+            if is_text:
+                return (
+                    503,
+                    "The AI service is not configured correctly on the server. "
+                    "Please set allergens manually below.",
+                )
             return (
                 503,
                 "The AI service is not configured correctly on the server. "
                 "Please add items manually below.",
             )
         if isinstance(error, gax_exceptions.InvalidArgument):
+            if is_text:
+                return (
+                    400,
+                    "The AI service could not parse these ingredients. "
+                    "Please rephrase the list, or set allergens manually below.",
+                )
             return (
                 400,
                 "The AI service could not process this file. "
@@ -123,24 +156,48 @@ def _classify_genai_error(error: Exception) -> tuple:
 
     text = str(error).lower()
     if any(token in text for token in ("429", "quota", "credits", "billing", "rate limit")):
+        if is_text:
+            return (
+                503,
+                "AI parsing quota or credits have been exhausted. "
+                "Please try again later, or set allergens manually below.",
+            )
         return (
             503,
             "AI ingestion quota or credits have been exhausted. "
             "Please try again later, or add items manually below.",
         )
     if any(token in text for token in ("permission", "api_key", "api key", "unauthenticated", "401", "403")):
+        if is_text:
+            return (
+                503,
+                "The AI service is not configured correctly on the server. "
+                "Please set allergens manually below.",
+            )
         return (
             503,
             "The AI service is not configured correctly on the server. "
             "Please add items manually below.",
         )
     if any(token in text for token in ("safety", "blocked", "policy")):
+        if is_text:
+            return (
+                422,
+                "The AI service refused to process this text due to content policy. "
+                "Please set allergens manually below.",
+            )
         return (
             422,
             "The AI service refused to process this file due to content policy. "
             "Please add items manually below.",
         )
 
+    if is_text:
+        return (
+            502,
+            "The AI service is temporarily unavailable. "
+            "Please try again later, or set allergens manually below.",
+        )
     return (
         502,
         "The AI service is temporarily unavailable. "
@@ -283,59 +340,20 @@ async def parse_ingredients_ai(
         if not user_id:
             raise HTTPException(status_code=401, detail="Invalid user token")
 
-        api_key = os.getenv("GOOGLE_AI_API_KEY")
-        if not api_key:
-            raise HTTPException(
-                status_code=500,
-                detail="GOOGLE_AI_API_KEY env var is not set on the server",
-            )
-
-        if genai is None:
-            raise HTTPException(
-                status_code=500,
-                detail="google-generativeai library is not installed on the server",
-            )
-
-        genai.configure(api_key=api_key)
-
-        # Determine candidate models: prefer env override, then SDK-discovered, then fallbacks
-        env_model = os.getenv("GEMINI_MODEL")
-        candidate_models: List[str] = []
-        if env_model:
-            candidate_models.append(env_model)
-
-        # Try to discover models supported for generateContent via SDK
-        try:
-            discovered = [
-                m.name
-                for m in genai.list_models()
-                if getattr(m, "supported_generation_methods", None)
-                and "generateContent" in m.supported_generation_methods
-            ]
-            # Simple preference ordering: flash/pro, 1.5 > 1.0 > others
-            preference = ["1.5", "flash", "pro"]
-            discovered_sorted = sorted(
-                discovered,
-                key=lambda n: (0 if any(p in n for p in preference) else 1, n),
-            )
-            for n in discovered_sorted:
-                if n not in candidate_models:
-                    candidate_models.append(n)
-        except Exception:
-            pass
-
-        # Final fallbacks in case discovery failed
-        for fb in [
-            "gemini-1.5-flash-001",
-            "gemini-1.5-flash",
-            "gemini-1.5-flash-latest",
-            "gemini-1.5-flash-002",
-            "gemini-1.5-pro",
-            "gemini-1.0-pro",
-            "gemini-pro",
-        ]:
-            if fb not in candidate_models:
-                candidate_models.append(fb)
+        # Configure the SDK and pick a parse-appropriate model. _select_model_name
+        # honors GEMINI_PARSE_MODEL first, then GEMINI_MODEL, then auto-discovery,
+        # then current static fallbacks. This mirrors the ingest endpoint and
+        # avoids the stale hardcoded model list that previously surfaced as
+        # InvalidArgument errors here.
+        _ensure_genai_configured()
+        model_name = _select_model_name("parse")
+        model = genai.GenerativeModel(
+            model_name=model_name,
+            generation_config={
+                "temperature": 0,
+                "response_mime_type": "application/json",
+            },
+        )
 
         prompt = (
             "You are extracting food safety attributes from free-text ingredient lists.\n"
@@ -348,41 +366,18 @@ async def parse_ingredients_ai(
             f"Text: {payload.ingredients}"
         )
 
-        last_error = None
-        response = None
-        for model_name in candidate_models:
-            try:
-                model = genai.GenerativeModel(
-                    model_name=model_name,
-                    generation_config={
-                        "temperature": 0,
-                        "response_mime_type": "application/json",
-                    },
-                )
-                try:
-                    response = model.generate_content(prompt)
-                except Exception as e:
-                    # Translate known upstream failures into HTTPExceptions with a
-                    # useful message so the frontend can surface them to the user.
-                    status_code, detail = _classify_genai_error(e)
-                    raise HTTPException(status_code=status_code, detail=detail)
-                if response and getattr(response, "text", None):
-                    break
-            except HTTPException:
-                raise
-            except Exception as e:
-                last_error = e
-                continue
+        try:
+            response = model.generate_content(prompt)
+        except Exception as e:
+            status_code, detail = _classify_genai_error(e, context="text")
+            raise HTTPException(status_code=status_code, detail=detail)
 
         if response is None or not getattr(response, "text", None):
-            if last_error is not None:
-                status_code, detail = _classify_genai_error(last_error)
-                raise HTTPException(status_code=status_code, detail=detail)
             raise HTTPException(
                 status_code=503,
                 detail=(
                     "The AI service is temporarily unavailable. "
-                    "Please try again later, or set allergens manually."
+                    "Please try again later, or set allergens manually below."
                 ),
             )
         raw_text = response.text
@@ -444,7 +439,7 @@ async def parse_ingredients_ai(
         raise
     except Exception as e:
         print(f"AI parse error: {str(e)}")
-        status_code, detail = _classify_genai_error(e)
+        status_code, detail = _classify_genai_error(e, context="text")
         raise HTTPException(status_code=status_code, detail=detail)
 
 
@@ -587,17 +582,22 @@ async def ingest_menu_file(  # 1. Renamed for clarity
             "}\n\n"
             "---"
             "### **CRITICAL INSTRUCTIONS for 'ingredients' field**\n"
-            "You must build the ingredients list by following these steps IN ORDER:\n\n"
-            "1.  **Start with the Name:** ALWAYS add the main food component(s) from the item's 'name' as the first ingredient(s).\n"
-            "    * **Example:** If 'name' is 'Rigatoni', the 'ingredients' array **must** include 'rigatoni'.\n"
-            "    * **Example:** If 'name' is 'Chicken Sandwich', the 'ingredients' array **must** include 'chicken' and 'bread'.\n"
-            "    * **Example:** If 'name' is 'Mushroom Pizza', the 'ingredients' array **must** include 'mushroom' and 'pizza dough'.\n\n"
-            "2.  **Add from Description:** After adding from the name, scan the 'description' and add ALL other ingredients explicitly mentioned.\n"
+            "The 'ingredients' array must contain only actual food components, NEVER the dish name itself.\n"
+            "Build the list by following these steps IN ORDER:\n\n"
+            "1.  **Never use the dish name as an ingredient.** Do NOT add the menu item's 'name' (or any obvious dish-name phrase) as a literal entry.\n"
+            "    * **Example:** For 'name' = 'Mushroom Pizza', the array must NOT contain 'mushroom pizza' or 'pizza'.\n"
+            "    * **Example:** For 'name' = 'Chicken Sandwich', the array must NOT contain 'chicken sandwich'.\n"
+            "    * **Example:** For 'name' = 'Latte', the array must NOT contain 'latte'.\n"
+            "    * **Example:** For 'name' = 'Queso Dip', the array must NOT contain 'queso dip'.\n\n"
+            "2.  **Add from Description:** Scan the 'description' and add ALL ingredients explicitly mentioned.\n"
             "    * **Example:** If 'description' is 'topped with parmesan and fresh basil', you must add 'parmesan' and 'fresh basil' to the array.\n\n"
-            "3.  **Infer if Necessary:** If the description is empty, infer any other *absolutely essential* ingredients implied by the name that are not already listed.\n"
-            "    * **Example:** For 'Latte', you would first add 'latte' (from the name), then infer and add 'espresso' and 'milk'.\n"
-            "    * **Example:** For 'Queso Dip', you would first add 'queso' (from the name), then infer and add 'cheese'.\n\n"
-            "4.  **Format:** The final output for 'ingredients' MUST be a JSON array of strings."
+            "3.  **Decompose the Name into real food components:** Break the dish name (and any cooking-style or preparation words) into the underlying food components and add those. If the description is empty, also infer any *absolutely essential* additional ingredients implied by the dish.\n"
+            "    * **Example:** 'Mushroom Pizza' (no description) -> ['mushroom', 'pizza dough', 'tomato sauce', 'mozzarella']. Do NOT add 'mushroom pizza'.\n"
+            "    * **Example:** 'Chicken Sandwich' -> ['chicken', 'bread']. Do NOT add 'chicken sandwich'.\n"
+            "    * **Example:** 'Latte' -> ['espresso', 'milk']. Do NOT add 'latte'.\n"
+            "    * **Example:** 'Queso Dip' -> ['queso', 'cheese']. Do NOT add 'queso dip'.\n"
+            "    * **Example:** 'Rigatoni' -> ['rigatoni pasta', 'wheat flour']. The noodle type is a real ingredient, but the bare dish name on its own is not.\n\n"
+            "4.  **Format:** The final output for 'ingredients' MUST be a JSON array of strings, and none of those strings may be the dish name itself."
         )
 
         # 7. The AI call is identical, just using the generic 'model_part'
