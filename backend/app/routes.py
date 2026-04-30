@@ -4,6 +4,7 @@ from firebase_admin import auth, db, storage
 import random
 from models import Restaurant, MenuItem, MenuItemUpdate, BulkMenuUpdate
 from typing import List, Optional
+from ingredient_parser import parse_ingredients
 from auth_routes import verify_token
 import os
 import json
@@ -117,7 +118,8 @@ async def _authorize_restaurant_access(restaurant_id: str, token_data: dict):
     restaurant_ref = db.reference(f"restaurants/{restaurant_id}")
     restaurant_data = restaurant_ref.get()
     if not restaurant_data:
-        raise HTTPException(status_code=404, detail=f"Restaurant {restaurant_id} not found")
+        raise HTTPException(
+            status_code=404, detail=f"Restaurant {restaurant_id} not found")
 
     if restaurant_data.get("owner_uid") != user_id and not is_admin:
         raise HTTPException(
@@ -139,7 +141,8 @@ def _normalize_menu_item_record(item_id: str, item_data: dict, restaurant_id: st
 
 
 def _merge_tag_updates(existing_values: List[str], additions: List[str], removals: List[str]) -> List[str]:
-    merged = [value for value in (existing_values or []) if value not in removals]
+    merged = [value for value in (
+        existing_values or []) if value not in removals]
     for value in additions or []:
         if value not in merged:
             merged.append(value)
@@ -276,7 +279,7 @@ async def parse_ingredients_ai(
             start = raw_text.find("{")
             end = raw_text.rfind("}")
             if start != -1 and end != -1 and end > start:
-                parsed = json.loads(raw_text[start : end + 1])
+                parsed = json.loads(raw_text[start: end + 1])
             else:
                 raise
 
@@ -311,7 +314,8 @@ async def parse_ingredients_ai(
         allergens = [normalize_id(a) for a in parsed.get("allergens", [])]
         allergens = [a for a in allergens if a in valid_allergens]
 
-        dietary = [normalize_id(c) for c in parsed.get("dietaryCategories", [])]
+        dietary = [normalize_id(c)
+                   for c in parsed.get("dietaryCategories", [])]
         dietary = [d for d in dietary if d in valid_dietary]
 
         extracted_ingredients = parsed.get("extractedIngredients", []) or []
@@ -433,7 +437,8 @@ async def ingest_menu_file(  # 1. Renamed for clarity
         # Persist the original uploaded menu file to Cloud Storage for auditing/debugging.
         try:
             bucket_name = os.getenv("FIREBASE_STORAGE_BUCKET")
-            bucket = storage.bucket(bucket_name) if bucket_name else storage.bucket()
+            bucket = storage.bucket(
+                bucket_name) if bucket_name else storage.bucket()
 
             original_name = file.filename or "menu"
             _, ext = os.path.splitext(original_name)
@@ -441,7 +446,8 @@ async def ingest_menu_file(  # 1. Renamed for clarity
             source_key = f"menu_files/{user_id}/{uuid4().hex}{ext}"
 
             source_blob = bucket.blob(source_key)
-            source_blob.upload_from_string(file_bytes, content_type=file.content_type)
+            source_blob.upload_from_string(
+                file_bytes, content_type=file.content_type)
         except Exception as storage_error:
             # Log but do not fail the ingestion if archival storage is unavailable.
             print(f"Error archiving menu file to storage: {storage_error}")
@@ -499,7 +505,7 @@ async def ingest_menu_file(  # 1. Renamed for clarity
             start = raw_text.find("{")
             end = raw_text.rfind("}")
             if start != -1 and end != -1 and end > start:
-                parsed = json.loads(raw_text[start : end + 1])
+                parsed = json.loads(raw_text[start: end + 1])
             else:
                 raise
 
@@ -537,7 +543,8 @@ async def ingest_menu_file(  # 1. Renamed for clarity
                 ingredients_text = str(ingredients_list).strip()
 
             # Reuse the same parsing pipeline by calling the model once more for ingredients
-            ai_parse_request = ParseIngredientsRequest(ingredients=ingredients_text)
+            ai_parse_request = ParseIngredientsRequest(
+                ingredients=ingredients_text)
             # Inline invocation of the same logic as parse_ingredients_ai
             # Configure and select model
             _ensure_genai_configured()
@@ -603,7 +610,7 @@ async def ingest_menu_file(  # 1. Renamed for clarity
                 s = ai_raw.find("{")
                 e = ai_raw.rfind("}")
                 ai_parsed = (
-                    json.loads(ai_raw[s : e + 1])
+                    json.loads(ai_raw[s: e + 1])
                     if s != -1 and e != -1 and e > s
                     else {}
                 )
@@ -643,7 +650,8 @@ async def ingest_menu_file(  # 1. Renamed for clarity
                 for d in [norm(x) for x in ai_parsed.get("dietaryCategories", [])]
                 if d in valid_dietary
             ]
-            extracted_ingredients = ai_parsed.get("extractedIngredients", []) or []
+            extracted_ingredients = ai_parsed.get(
+                "extractedIngredients", []) or []
             if extracted_ingredients and not ingredients_text:
                 ingredients_text = ", ".join(extracted_ingredients)
 
@@ -664,7 +672,8 @@ async def ingest_menu_file(  # 1. Renamed for clarity
     except Exception as e:
         # 8. Update log/error messages
         print(f"Ingest file error: {str(e)}")
-        raise HTTPException(status_code=500, detail="Failed to ingest menu file")
+        raise HTTPException(
+            status_code=500, detail="Failed to ingest menu file")
 
 
 @router.post("/restaurants/")
@@ -839,7 +848,8 @@ async def add_menu_item(
                 detail=f"Invalid allergens: {', '.join(invalid_allergens)}",
             )
 
-        invalid_categories = set(menu_item.dietaryCategories) - VALID_DIETARY_CATEGORIES
+        invalid_categories = set(
+            menu_item.dietaryCategories) - VALID_DIETARY_CATEGORIES
         if invalid_categories:
             raise HTTPException(
                 status_code=400,
@@ -849,7 +859,14 @@ async def add_menu_item(
         menu_item_id = generate_id("menu_items")
         menu_item_dict = menu_item.dict()
 
-        # Add restaurant_id and item_id to the menu item data
+        # 🔥 1. Run your parser on ingredients
+        parsed = parse_ingredients(menu_item.ingredients)
+
+        # 🔥 2. Inject intelligent results
+        menu_item_dict["allergens"] = parsed["allergens"]
+        menu_item_dict["dietaryCategories"] = parsed["dietaryCategories"]
+
+        # Add restaurant_id and item_id to the menu item data --> build final object
         menu_item_data = {
             **menu_item_dict,
             "restaurant_id": restaurant_id,
@@ -896,7 +913,8 @@ async def get_menu_items(
 
         # Attach short-lived signed image URLs for any items that have an image path.
         bucket_name = os.getenv("FIREBASE_STORAGE_BUCKET")
-        bucket = storage.bucket(bucket_name) if bucket_name else storage.bucket()
+        bucket = storage.bucket(
+            bucket_name) if bucket_name else storage.bucket()
 
         for item in restaurant_menu:
             image_path = item.get("image_path")
@@ -1018,7 +1036,8 @@ async def duplicate_menu_item(
         }
         duplicated_menu_item.pop("image_url", None)
 
-        db.reference("menu_items").child(new_menu_item_id).set(duplicated_menu_item)
+        db.reference("menu_items").child(
+            new_menu_item_id).set(duplicated_menu_item)
         return duplicated_menu_item
     except HTTPException:
         raise
@@ -1112,7 +1131,8 @@ async def bulk_update_menu_items(
     try:
         await _authorize_restaurant_access(restaurant_id, token_data)
 
-        invalid_allergens = set(payload.add_allergens + payload.remove_allergens) - VALID_ALLERGENS
+        invalid_allergens = set(
+            payload.add_allergens + payload.remove_allergens) - VALID_ALLERGENS
         if invalid_allergens:
             raise HTTPException(
                 status_code=400,
@@ -1120,7 +1140,8 @@ async def bulk_update_menu_items(
             )
 
         invalid_categories = (
-            set(payload.add_dietary_categories + payload.remove_dietary_categories)
+            set(payload.add_dietary_categories +
+                payload.remove_dietary_categories)
             - VALID_DIETARY_CATEGORIES
         )
         if invalid_categories:
@@ -1130,7 +1151,8 @@ async def bulk_update_menu_items(
             )
 
         if not payload.item_ids:
-            raise HTTPException(status_code=400, detail="No menu item ids provided")
+            raise HTTPException(
+                status_code=400, detail="No menu item ids provided")
 
         menu_ref = db.reference("menu_items")
         updated_items = []
@@ -1285,7 +1307,8 @@ async def upload_menu_item_image(
 
         # Determine storage bucket
         bucket_name = os.getenv("FIREBASE_STORAGE_BUCKET")
-        bucket = storage.bucket(bucket_name) if bucket_name else storage.bucket()
+        bucket = storage.bucket(
+            bucket_name) if bucket_name else storage.bucket()
 
         # Build a safe, reasonably unique filename
         original_name = file.filename or "image"
@@ -1371,11 +1394,13 @@ async def delete_menu_item_image(
         if image_path:
             try:
                 bucket_name = os.getenv("FIREBASE_STORAGE_BUCKET")
-                bucket = storage.bucket(bucket_name) if bucket_name else storage.bucket()
+                bucket = storage.bucket(
+                    bucket_name) if bucket_name else storage.bucket()
                 blob = bucket.blob(image_path)
                 blob.delete()
             except Exception as storage_error:
-                print(f"Error deleting image blob for menu item {menu_item_id}: {storage_error}")
+                print(
+                    f"Error deleting image blob for menu item {menu_item_id}: {storage_error}")
 
         # Clear image fields on the menu item record
         menu_ref.update({"image_url": None, "image_path": None})
@@ -1389,3 +1414,8 @@ async def delete_menu_item_image(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to delete image",
         )
+
+
+@router.post("/test-ingredients")
+def test_ingredients(ingredients: list[str]):
+    return parse_ingredients(ingredients)
