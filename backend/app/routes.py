@@ -222,6 +222,28 @@ def _best_effort_delete_blob(image_path: Optional[str], context: str = "") -> No
         print(f"Error deleting image blob {image_path}{suffix}: {storage_error}")
 
 
+def _attach_restaurant_logo_url(restaurant_dict: dict, bucket=None) -> None:
+    """Attach a fresh 1h signed URL to a restaurant dict if it has logo_path.
+
+    Mirrors the menu-item signed-URL pattern: logo_path is the long-term
+    source of truth and logo_url is regenerated on every restaurant GET so
+    expiring URLs never need to be persisted.
+    """
+    path = restaurant_dict.get("logo_path") if isinstance(restaurant_dict, dict) else None
+    if not path:
+        return
+    try:
+        if bucket is None:
+            bucket_name = os.getenv("FIREBASE_STORAGE_BUCKET")
+            bucket = storage.bucket(bucket_name) if bucket_name else storage.bucket()
+        restaurant_dict["logo_url"] = bucket.blob(path).generate_signed_url(
+            expiration=timedelta(hours=1),
+            method="GET",
+        )
+    except Exception as e:
+        print(f"Error generating signed URL for restaurant logo {path}: {e}")
+
+
 def _merge_tag_updates(existing_values: List[str], additions: List[str], removals: List[str]) -> List[str]:
     merged = [value for value in (existing_values or []) if value not in removals]
     for value in additions or []:
@@ -848,6 +870,13 @@ async def get_restaurants(token_data: dict = Depends(verify_token)):
                 if rdata.get("owner_uid") == user_id or (rid in members_by_restaurant and user_id in members_by_restaurant.get(rid, {}))
             ]
 
+        # Attach fresh signed URLs for any restaurant that has a logo. Reuse
+        # one bucket handle across the list.
+        bucket_name = os.getenv("FIREBASE_STORAGE_BUCKET")
+        bucket = storage.bucket(bucket_name) if bucket_name else storage.bucket()
+        for r in restaurants:
+            _attach_restaurant_logo_url(r, bucket)
+
         return restaurants
     except Exception as e:
         print(f"Error fetching restaurants: {str(e)}")
@@ -881,7 +910,9 @@ async def get_restaurant(restaurant_id: str, token_data: dict = Depends(verify_t
                 detail="You don't have permission to access this restaurant",
             )
 
-        return {"id": restaurant_id, **restaurant_data}
+        result = {"id": restaurant_id, **restaurant_data}
+        _attach_restaurant_logo_url(result)
+        return result
     except HTTPException:
         raise
     except Exception as e:
@@ -968,6 +999,12 @@ async def delete_restaurant(
                     "restaurant_id"
                 ) == restaurant_id:
                     db.reference(f"menu_items/{item_id}").delete()
+
+        # Best-effort cleanup of the restaurant's own logo blob.
+        _best_effort_delete_blob(
+            restaurant_data.get("logo_path"),
+            context=f"delete_restaurant({restaurant_id})",
+        )
 
         db.reference(f"restaurant_members/{restaurant_id}").delete()
         restaurant_ref.delete()
@@ -1645,4 +1682,149 @@ async def delete_menu_item_image(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to delete image",
+        )
+
+
+@router.post("/api/restaurants/{restaurant_id}/logo")
+async def upload_restaurant_logo(
+    restaurant_id: str,
+    file: UploadFile = File(...),
+    token_data: dict = Depends(verify_token),
+):
+    """
+    Upload a logo image for a restaurant, store it in Firebase Cloud Storage,
+    and persist the durable storage path on the corresponding restaurant
+    record. Returns a short-lived signed URL for immediate UI preview.
+
+    Authorization: managers and admins only (staff cannot change branding).
+    """
+    try:
+        user_id = token_data.get("uid")
+        if not user_id:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid user token",
+            )
+
+        allowed_types = {"image/jpeg", "image/png", "image/webp"}
+        if file.content_type not in allowed_types:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Only JPEG, PNG, and WebP images are allowed.",
+            )
+
+        file_bytes = await file.read()
+        if len(file_bytes) > MAX_IMAGE_SIZE_BYTES:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Image exceeds maximum size of 5MB.",
+            )
+
+        restaurant_ref = db.reference(f"restaurants/{restaurant_id}")
+        restaurant_data = restaurant_ref.get()
+        if not restaurant_data:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Restaurant {restaurant_id} not found",
+            )
+
+        is_admin = await check_admin_status(token_data)
+        if not can_manage_restaurant(db, user_id, restaurant_id, is_admin):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Only managers can change the restaurant logo.",
+            )
+
+        bucket_name = os.getenv("FIREBASE_STORAGE_BUCKET")
+        bucket = storage.bucket(bucket_name) if bucket_name else storage.bucket()
+
+        # Capture the prior logo path BEFORE we overwrite the record so we can
+        # clean up the old blob after the new one is safely uploaded.
+        previous_logo_path = restaurant_data.get("logo_path")
+
+        original_name = file.filename or "logo"
+        _, ext = os.path.splitext(original_name)
+        ext = ext.lower() if ext else ""
+        unique_name = f"{uuid4().hex}{ext}"
+        blob_path = f"restaurants/{restaurant_id}/logo/{unique_name}"
+
+        blob = bucket.blob(blob_path)
+        blob.upload_from_string(file_bytes, content_type=file.content_type)
+
+        # Generate a transient signed URL for the immediate UI preview.
+        # logo_path is the durable source of truth; logo_url is regenerated
+        # from logo_path on every restaurant GET (signed URLs expire in 1h).
+        logo_url = blob.generate_signed_url(
+            expiration=timedelta(hours=1),
+            method="GET",
+        )
+
+        restaurant_ref.update({"logo_path": blob_path})
+
+        # Replace lifecycle: now that the new blob is safely uploaded and the
+        # DB record points at it, clean up the previous blob (best-effort).
+        if previous_logo_path and previous_logo_path != blob_path:
+            _best_effort_delete_blob(
+                previous_logo_path,
+                context=f"upload_restaurant_logo({restaurant_id}) replace",
+            )
+
+        return {"logo_url": logo_url, "logo_path": blob_path}
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"Error uploading restaurant logo: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to upload logo",
+        )
+
+
+@router.delete("/api/restaurants/{restaurant_id}/logo")
+async def delete_restaurant_logo(
+    restaurant_id: str,
+    token_data: dict = Depends(verify_token),
+):
+    """
+    Delete a restaurant's logo from Firebase Cloud Storage and clear the
+    stored path on the restaurant record. Manager/admin only.
+    """
+    try:
+        user_id = token_data.get("uid")
+        if not user_id:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid user token",
+            )
+
+        restaurant_ref = db.reference(f"restaurants/{restaurant_id}")
+        restaurant_data = restaurant_ref.get()
+        if not restaurant_data:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Restaurant {restaurant_id} not found",
+            )
+
+        is_admin = await check_admin_status(token_data)
+        if not can_manage_restaurant(db, user_id, restaurant_id, is_admin):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Only managers can change the restaurant logo.",
+            )
+
+        _best_effort_delete_blob(
+            restaurant_data.get("logo_path"),
+            context=f"delete_restaurant_logo({restaurant_id})",
+        )
+
+        restaurant_ref.update({"logo_path": None})
+
+        return {"message": f"Logo for restaurant {restaurant_id} deleted"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"Error deleting restaurant logo: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to delete logo",
         )

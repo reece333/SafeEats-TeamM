@@ -4,6 +4,7 @@ import { Capacitor } from '@capacitor/core';
 import { Toast } from '@capacitor/toast';
 import { api } from '../../services/api';
 import MenuItemForm from '../Menu/MenuItemForm';
+import RestaurantLogoUpload from './RestaurantLogoUpload';
 
 // When a Firebase signed URL expires (1h TTL), browsers will fail to load the
 // thumbnail. Rather than adding a per-item refresh endpoint, we just refetch
@@ -399,7 +400,18 @@ const RestaurantPage = () => {
         {editingRestaurant ? (
           <div className="animate-fadeIn">
             <h2 className="text-2xl font-bold mb-4">Edit Restaurant Information</h2>
-            
+
+            <div className="mb-6">
+              <RestaurantLogoUpload
+                restaurantId={restaurantId}
+                initialLogoUrl={restaurant.logo_url || ''}
+                onLogoChange={() => {
+                  fetchRestaurantData();
+                }}
+                onImageError={handleSignedUrlExpired}
+              />
+            </div>
+
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Restaurant Name</label>
@@ -477,7 +489,17 @@ const RestaurantPage = () => {
               </button>
             )}
             
-            <h2 className="text-2xl font-bold mb-2">{restaurant.name}</h2>
+            <div className="flex items-start gap-4 mb-2">
+              {restaurant.logo_url && (
+                <img
+                  src={restaurant.logo_url}
+                  alt={`${restaurant.name} logo`}
+                  className="w-16 h-16 object-cover rounded-md shadow-sm flex-shrink-0"
+                  onError={handleSignedUrlExpired}
+                />
+              )}
+              <h2 className="text-2xl font-bold">{restaurant.name}</h2>
+            </div>
             <p className="text-sm text-gray-600 mb-4">
               New to SafeEats?{" "}
               <a

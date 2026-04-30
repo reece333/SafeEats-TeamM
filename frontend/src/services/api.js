@@ -704,6 +704,85 @@ export const api = {
     }
   },
 
+  uploadRestaurantLogo: async (restaurantId, file, onProgress) => {
+    const token = getAuthToken();
+    if (!token) {
+      throw new Error('Authentication required to upload images.');
+    }
+
+    return new Promise((resolve, reject) => {
+      try {
+        const formData = new FormData();
+        formData.append('file', file);
+
+        const xhr = new XMLHttpRequest();
+        xhr.open('POST', `${BASE_URL}/api/restaurants/${restaurantId}/logo`);
+        xhr.setRequestHeader('Authorization', `Bearer ${token}`);
+
+        xhr.onload = () => {
+          try {
+            if (xhr.status >= 200 && xhr.status < 300) {
+              const data = JSON.parse(xhr.responseText || '{}');
+              resolve(data);
+            } else {
+              let message = 'Failed to upload logo';
+              try {
+                const errData = JSON.parse(xhr.responseText || '{}');
+                if (errData && errData.detail) {
+                  message = errData.detail;
+                }
+              } catch {
+                // ignore JSON parse errors
+              }
+              reject(new Error(message));
+            }
+          } catch (e) {
+            reject(e);
+          }
+        };
+
+        xhr.onerror = () => {
+          reject(new Error('Network error during logo upload.'));
+        };
+
+        if (xhr.upload && typeof onProgress === 'function') {
+          xhr.upload.onprogress = (event) => {
+            if (event.lengthComputable) {
+              const percent = Math.round((event.loaded * 100) / event.total);
+              onProgress(percent);
+            }
+          };
+        }
+
+        xhr.send(formData);
+      } catch (e) {
+        reject(e);
+      }
+    });
+  },
+
+  deleteRestaurantLogo: async (restaurantId) => {
+    try {
+      const response = await httpRequest({
+        method: 'DELETE',
+        url: `${BASE_URL}/api/restaurants/${restaurantId}/logo`,
+        headers: {
+          Accept: 'application/json',
+        },
+      });
+
+      if (response.status !== 200) {
+        const errorData = response.data;
+        throw new Error(errorData?.detail || 'Failed to delete restaurant logo');
+      }
+
+      return response.data;
+    } catch (error) {
+      console.error('Error deleting restaurant logo:', error);
+      throw error;
+    }
+  },
+
   // Menu image ingestion
   ingestMenuImage: async (file) => {
     try {
