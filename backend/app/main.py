@@ -15,7 +15,7 @@ app.include_router(auth_router, prefix="/auth")
 origins = [
     "http://localhost:3000",    # React app
     "http://localhost:8000",    # FastAPI backend
-    "https://restaurant-allergy-manager.onrender.com"  # Render app
+    "https://safeeats-teamm.onrender.com" # Render app
 ]
 
 app.add_middleware(

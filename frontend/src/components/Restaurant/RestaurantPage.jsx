@@ -1,9 +1,16 @@
-import React, { useState, useEffect } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { useParams, useNavigate, Link } from 'react-router-dom';
 import { Capacitor } from '@capacitor/core';
 import { Toast } from '@capacitor/toast';
 import { api } from '../../services/api';
 import MenuItemForm from '../Menu/MenuItemForm';
+
+// When a Firebase signed URL expires (1h TTL), browsers will fail to load the
+// thumbnail. Rather than adding a per-item refresh endpoint, we just refetch
+// the menu list — the backend regenerates fresh signed URLs from each item's
+// image_path on every GET. We dedupe concurrent refreshes and cap retries so
+// a permanently broken blob can't trigger an infinite refetch loop.
+const MAX_IMAGE_REFETCH_ATTEMPTS = 2;
 
 const allergenOptions = [
   { id: 'milk', label: 'Milk', icon: '🥛' },
@@ -44,6 +51,7 @@ const RestaurantPage = () => {
   const [error, setError] = useState('');
   const [editingItemId, setEditingItemId] = useState(null);
   const [originalItem, setOriginalItem] = useState(null);
+  const [restaurantRole, setRestaurantRole] = useState(null); // 'manager' | 'staff' for this restaurant
   
   // Add state for restaurant editing
   const [editingRestaurant, setEditingRestaurant] = useState(false);
@@ -54,6 +62,14 @@ const RestaurantPage = () => {
     cuisine_type: ''
   });
   
+  // Team (manager only): members list, invite form
+  const [members, setMembers] = useState([]);
+  const [membersLoading, setMembersLoading] = useState(false);
+  const [inviteEmail, setInviteEmail] = useState('');
+  const [inviteRole, setInviteRole] = useState('staff');
+  const [inviteError, setInviteError] = useState('');
+  const [inviteSuccess, setInviteSuccess] = useState('');
+  
   // Add state for confirmation dialog and success messages
   const [showConfirmDialog, setShowConfirmDialog] = useState(false);
   const [itemToDelete, setItemToDelete] = useState(null);
@@ -63,6 +79,11 @@ const RestaurantPage = () => {
   const [deleteSuccessMessage, setDeleteSuccessMessage] = useState('');
   const [showItemsAddedMessage, setShowItemsAddedMessage] = useState(false);
   const [itemsAddedMessage, setItemsAddedMessage] = useState('');
+  const [showDeleteRestaurantDialog, setShowDeleteRestaurantDialog] = useState(false);
+
+  // Refs supporting the signed-URL refetch-on-error strategy.
+  const imageRefetchInFlightRef = useRef(false);
+  const imageRefetchAttemptsRef = useRef(0);
 
   const showToast = async (message) => {
     if (Capacitor.isNativePlatform()) {
@@ -81,6 +102,11 @@ const RestaurantPage = () => {
 
   const fetchRestaurantData = async () => {
     try {
+      const user = await api.getCurrentUser();
+      const role = user?.restaurants?.find(r => String(r.id) === String(restaurantId))?.role;
+      setRestaurantRole(role || null);
+      if (role) api.setCurrentRestaurant(restaurantId, role);
+
       const restaurantData = await api.getRestaurants();
       const restaurant = restaurantData.find(r => String(r.id) === restaurantId);
 
@@ -92,7 +118,6 @@ const RestaurantPage = () => {
 
       setRestaurant(restaurant);
       
-      // Initialize restaurant form data
       setRestaurantFormData({
         name: restaurant.name || '',
         address: restaurant.address || '',
@@ -100,11 +125,21 @@ const RestaurantPage = () => {
         cuisine_type: restaurant.cuisine_type || ''
       });
 
-      // Fetch menu items
       const menuData = await api.getMenuItems(restaurantId);
       setMenuItems(menuData);
 
-    } catch (error) {
+      if (role === 'manager') {
+        setMembersLoading(true);
+        try {
+          const memberList = await api.getRestaurantMembers(restaurantId);
+          setMembers(memberList);
+        } catch {
+          setMembers([]);
+        } finally {
+          setMembersLoading(false);
+        }
+      }
+    } catch (err) {
       setError('Failed to load restaurant information');
       await showToast('Failed to load restaurant information');
     } finally {
@@ -116,6 +151,22 @@ const RestaurantPage = () => {
   useEffect(() => {
     fetchRestaurantData();
   }, [restaurantId]);
+
+  // Triggered when a thumbnail / preview <img> fails to load — most often
+  // because its 1-hour signed URL has expired. We refetch the menu (which
+  // forces the backend to regenerate fresh signed URLs from image_path),
+  // dedupe concurrent attempts, and cap total retries.
+  const handleSignedUrlExpired = useCallback(() => {
+    if (imageRefetchInFlightRef.current) return;
+    if (imageRefetchAttemptsRef.current >= MAX_IMAGE_REFETCH_ATTEMPTS) return;
+    imageRefetchAttemptsRef.current += 1;
+    imageRefetchInFlightRef.current = true;
+    fetchRestaurantData().finally(() => {
+      imageRefetchInFlightRef.current = false;
+    });
+  }, [restaurantId]);
+
+  const visibleMenuItems = menuItems.filter((item) => !item.archived);
 
   // Separate useEffect for handling success messages from localStorage
   useEffect(() => {
@@ -189,7 +240,7 @@ const RestaurantPage = () => {
 
   // Menu item functions
   const confirmDelete = (menuItemId) => {
-    const itemToDelete = menuItems.find(item => item.id === menuItemId);
+    const itemToDelete = visibleMenuItems.find(item => item.id === menuItemId);
     if (!itemToDelete) return;
     
     setItemToDelete(itemToDelete);
@@ -232,9 +283,22 @@ const RestaurantPage = () => {
     }
   };
 
+  const cancelDeleteRestaurant = () => setShowDeleteRestaurantDialog(false);
+
+  const handleDeleteRestaurant = async () => {
+    try {
+      await api.deleteRestaurant(restaurantId);
+      setShowDeleteRestaurantDialog(false);
+      navigate('/dashboard');
+    } catch (error) {
+      await showToast(error.message || 'Failed to delete restaurant');
+      setShowDeleteRestaurantDialog(false);
+    }
+  };
+
   const handleEdit = (menuItemId) => {
     // Store the original item before starting to edit
-    const itemToEdit = menuItems.find(item => item.id === menuItemId);
+    const itemToEdit = visibleMenuItems.find(item => item.id === menuItemId);
     setOriginalItem(itemToEdit);
   
     // Toggle editing state for this item
@@ -320,9 +384,18 @@ const RestaurantPage = () => {
   return (
     <div className="max-w-4xl mx-auto p-6 flex flex-col justify-center items-center font-[Roboto_Flex]">
       <style>{styles}</style>
-      
+
+      <div className="w-full mb-4">
+        <Link to="/dashboard" className="text-sm text-[#8DB670] hover:underline">
+          ← My restaurants
+        </Link>
+      </div>
+
       {/* Restaurant Information Section */}
       <div className="w-full bg-white rounded-xl shadow-md p-6 mb-8">
+        {restaurantRole === 'staff' && (
+          <p className="text-sm text-gray-500 mb-2">You have staff access: you can edit menu items but not restaurant settings.</p>
+        )}
         {editingRestaurant ? (
           <div className="animate-fadeIn">
             <h2 className="text-2xl font-bold mb-4">Edit Restaurant Information</h2>
@@ -391,16 +464,18 @@ const RestaurantPage = () => {
           </div>
         ) : (
           <div className="relative">
-            {/* Edit button in top right corner - Changed from amber to blue */}
-            <button
-              onClick={handleEditRestaurant}
-              className="absolute top-0 right-0 bg-blue-500 text-white p-1.5 rounded-lg hover:bg-blue-600 transition"
-              title="Edit Restaurant Information"
-            >
-              <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
-              </svg>
-            </button>
+            {/* Edit button: manager only */}
+            {restaurantRole === 'manager' && (
+              <button
+                onClick={handleEditRestaurant}
+                className="absolute top-0 right-0 bg-blue-500 text-white p-1.5 rounded-lg hover:bg-blue-600 transition"
+                title="Edit Restaurant Information"
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
+                </svg>
+              </button>
+            )}
             
             <h2 className="text-2xl font-bold mb-2">{restaurant.name}</h2>
             <p className="text-sm text-gray-600 mb-4">
@@ -436,6 +511,87 @@ const RestaurantPage = () => {
         )}
       </div>
 
+      {/* Team section: manager only */}
+      {restaurantRole === 'manager' && (
+        <div className="w-full bg-white rounded-xl shadow-md p-6 mb-8">
+          <h3 className="text-xl font-semibold mb-4">Team</h3>
+          {membersLoading ? (
+            <p className="text-gray-500">Loading members…</p>
+          ) : (
+            <>
+              <ul className="space-y-2 mb-4">
+                {members.map((m) => (
+                  <li key={m.uid} className="flex items-center justify-between py-2 border-b border-gray-100">
+                    <span className="text-gray-700">{m.email}</span>
+                    <span className="flex items-center gap-2">
+                      <span className="text-xs px-2 py-0.5 rounded bg-gray-100 text-gray-600">{m.role}</span>
+                      {m.is_owner && <span className="text-xs text-gray-400">(owner)</span>}
+                      {!m.is_owner && (
+                        <button
+                          type="button"
+                          onClick={async () => {
+                            if (!window.confirm(`Remove ${m.email} from this restaurant?`)) return;
+                            try {
+                              await api.removeRestaurantMember(restaurantId, m.uid);
+                              setMembers(members.filter(x => x.uid !== m.uid));
+                              await showToast('Member removed');
+                            } catch (err) {
+                              await showToast(err.message || 'Failed to remove');
+                            }
+                          }}
+                          className="text-red-600 hover:underline text-sm"
+                        >
+                          Remove
+                        </button>
+                      )}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+              <div className="flex flex-wrap items-end gap-2">
+                <input
+                  type="email"
+                  placeholder="Email to invite"
+                  value={inviteEmail}
+                  onChange={(e) => { setInviteEmail(e.target.value); setInviteError(''); setInviteSuccess(''); }}
+                  className="border border-gray-300 rounded-lg px-3 py-2 flex-1 min-w-[180px]"
+                />
+                <select
+                  value={inviteRole}
+                  onChange={(e) => setInviteRole(e.target.value)}
+                  className="border border-gray-300 rounded-lg px-3 py-2"
+                >
+                  <option value="staff">Staff</option>
+                  <option value="manager">Manager</option>
+                </select>
+                <button
+                  type="button"
+                  onClick={async () => {
+                    if (!inviteEmail.trim()) return;
+                    setInviteError('');
+                    setInviteSuccess('');
+                    try {
+                      await api.inviteRestaurantMember(restaurantId, inviteEmail.trim(), inviteRole);
+                      setInviteEmail('');
+                      setInviteSuccess(`${inviteEmail} added as ${inviteRole}`);
+                      const memberList = await api.getRestaurantMembers(restaurantId);
+                      setMembers(memberList);
+                    } catch (err) {
+                      setInviteError(err.message || 'Invite failed');
+                    }
+                  }}
+                  className="bg-[#8DB670] text-white px-4 py-2 rounded-lg hover:bg-[#6c8b55]"
+                >
+                  Invite
+                </button>
+              </div>
+              {inviteError && <p className="text-red-600 text-sm mt-2">{inviteError}</p>}
+              {inviteSuccess && <p className="text-green-600 text-sm mt-2">{inviteSuccess}</p>}
+            </>
+          )}
+        </div>
+      )}
+
       {/* Menu Items Section */}
       <div className="w-full bg-white rounded-xl shadow-md p-6 mb-6">
         <div className="flex flex-col md:flex-row md:items-center md:justify-between mb-6 gap-2">
@@ -449,14 +605,14 @@ const RestaurantPage = () => {
             Need help adding items? Open “How Do I Add Menu Items?”
           </a>
         </div>
-        {menuItems.length === 0 ? (
+        {visibleMenuItems.length === 0 ? (
           <div className="text-center py-8">
             <p className="text-gray-500 mb-4">No menu items added yet.</p>
             <p className="text-gray-500 mb-6">Add your first items to start building your menu!</p>
           </div>
         ) : (
           <ul className="space-y-4 w-full">
-            {menuItems.map((item, index) => (
+            {visibleMenuItems.map((item, index) => (
               <li key={item.id} className="border rounded-xl p-4 shadow-sm relative">
                 {editingItemId === item.id ? (
                   <div className="animate-fadeIn">
@@ -479,12 +635,16 @@ const RestaurantPage = () => {
                                 : '$0.00'
                       }}
                       onImageChange={(newUrl) => {
+                        // Successful upload/delete resets the retry counter so a
+                        // subsequent expiry can trigger a refetch again.
+                        imageRefetchAttemptsRef.current = 0;
                         setMenuItems((prev) =>
                           prev.map((i) =>
                             i.id === item.id ? { ...i, image_url: newUrl } : i
                           )
                         );
                       }}
+                      onImageError={handleSignedUrlExpired}
                     />
                     <div className="flex justify-end space-x-2 mt-4">
                       <button
@@ -527,12 +687,22 @@ const RestaurantPage = () => {
                     </div>
                     
                     <div className="pr-16">
-                      {item.image_url && (
+                      {item.image_url ? (
                         <img
                           src={item.image_url}
                           alt={item.name}
                           className="w-24 h-24 object-cover rounded-md mb-2 shadow-sm"
+                          onError={handleSignedUrlExpired}
                         />
+                      ) : (
+                        <div
+                          className="w-24 h-24 rounded-md mb-2 flex flex-col items-center justify-center text-gray-400 bg-gray-100 border border-dashed border-gray-300"
+                          aria-label="No photo"
+                          title="No photo for this item"
+                        >
+                          <span className="text-2xl leading-none">📷</span>
+                          <span className="text-[10px] mt-1">No photo</span>
+                        </div>
                       )}
                       <p className="text-lg font-medium">{item.name}</p>
                       {/* Changed from green to bold dark gray for prices */}
@@ -591,6 +761,23 @@ const RestaurantPage = () => {
           </ul>
         )}
       </div>
+
+      {restaurant &&
+        String(restaurant.owner_uid || '') === String(localStorage.getItem('user_id') || '') && (
+          <div className="w-full max-w-4xl mb-8 border border-red-200 bg-red-50 rounded-xl p-6">
+            <h3 className="text-lg font-semibold text-red-900 mb-2">Delete restaurant</h3>
+            <p className="text-sm text-red-800 mb-4">
+              Permanently remove this restaurant, all of its menu items, and team memberships. This cannot be undone.
+            </p>
+            <button
+              type="button"
+              onClick={() => setShowDeleteRestaurantDialog(true)}
+              className="px-4 py-2 rounded-xl text-sm font-medium text-white bg-red-600 hover:bg-red-700"
+            >
+              Delete this restaurant…
+            </button>
+          </div>
+        )}
       
       <button 
         onClick={() => navigate(`/restaurant/${restaurantId}/menu`)}
@@ -619,6 +806,33 @@ const RestaurantPage = () => {
                 className="px-4 py-2 rounded-md shadow-sm text-sm font-medium text-white bg-red-600 hover:bg-red-700"
               >
                 Yes, Delete
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showDeleteRestaurantDialog && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 animate-fadeIn">
+          <div className="bg-white rounded-lg p-6 max-w-md w-full">
+            <h3 className="text-lg font-medium text-gray-900 mb-4">Delete restaurant</h3>
+            <p className="text-gray-600 mb-6">
+              Delete <span className="font-semibold">{restaurant?.name}</span> and all menu data? This cannot be undone.
+            </p>
+            <div className="flex justify-end space-x-3">
+              <button
+                type="button"
+                onClick={cancelDeleteRestaurant}
+                className="px-4 py-2 border border-gray-300 rounded-md shadow-sm text-sm font-medium text-gray-700 bg-white hover:bg-gray-50"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleDeleteRestaurant}
+                className="px-4 py-2 rounded-md shadow-sm text-sm font-medium text-white bg-red-600 hover:bg-red-700"
+              >
+                Yes, delete restaurant
               </button>
             </div>
           </div>

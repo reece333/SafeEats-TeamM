@@ -36,6 +36,10 @@ def _install_firebase_stubs():
             def __init__(self, data):
                 self.data = data
 
+    # Shared in-memory bucket so blobs persist across blob() calls within
+    # a single test (lets tests inspect uploads / deletions).
+    _bucket_state = {"objects": {}}
+
     class _BlobStub:
         def __init__(self, path):
             self.path = path
@@ -43,9 +47,23 @@ def _install_firebase_stubs():
         def generate_signed_url(self, *args, **kwargs):  # pragma: no cover - simple stub
             return f"https://example.com/{self.path}"
 
+        def upload_from_string(self, data, content_type=None):  # pragma: no cover
+            _bucket_state["objects"][self.path] = {
+                "data": data,
+                "content_type": content_type,
+            }
+
+        def delete(self):  # pragma: no cover
+            _bucket_state["objects"].pop(self.path, None)
+
     class _BucketStub:
         def blob(self, path):  # pragma: no cover - simple stub
             return _BlobStub(path)
+
+        # Test-only accessors for assertions.
+        @property
+        def _objects(self):  # pragma: no cover
+            return _bucket_state["objects"]
 
     class _StorageStub:
         def bucket(self, *args, **kwargs):  # pragma: no cover - simple stub
@@ -76,6 +94,7 @@ if _BASE_DIR not in sys.path:
 import main as app_main  # noqa: E402
 import routes as app_routes  # noqa: E402
 import auth_routes as app_auth  # noqa: E402
+import permissions as app_permissions  # noqa: E402
 
 
 class _Missing:
@@ -161,15 +180,19 @@ def fake_db():
         "users": {},
         "restaurants": {},
         "menu_items": {},
+        "restaurant_members": {},
     }
     return FakeDB(initial)
 
 
 @pytest.fixture
 def client(fake_db):
-    # Patch db on both modules
+    # Patch db on all modules that use it
     app_routes.db = fake_db  # type: ignore
     app_auth.db = fake_db  # type: ignore
+    # firebase_admin.db is used by auth_routes; patch it so all code uses fake_db
+    import firebase_admin
+    firebase_admin.db = fake_db  # type: ignore
 
     # Reset session tokens
     app_auth.SESSION_TOKENS.clear()
@@ -178,6 +201,7 @@ def client(fake_db):
     users_ref = fake_db.reference("users")
     users_ref.child("user1").set({"is_admin": False, "email": "u1@example.com"})
     users_ref.child("admin1").set({"is_admin": True, "email": "admin@example.com"})
+    users_ref.child("staff1").set({"is_admin": False, "email": "staff@example.com"})
 
     # Seed tokens
     app_auth.SESSION_TOKENS["valid-user-token"] = {
@@ -191,6 +215,12 @@ def client(fake_db):
         "email": "admin@example.com",
         "name": "Admin One",
         "is_admin": True,
+    }
+    app_auth.SESSION_TOKENS["valid-staff-token"] = {
+        "uid": "staff1",
+        "email": "staff@example.com",
+        "name": "Staff One",
+        "is_admin": False,
     }
 
     return TestClient(app_main.app)
@@ -206,5 +236,21 @@ def admin_auth_header():
     return {"Authorization": "Bearer valid-admin-token"}
 
 
+@pytest.fixture
+def storage_objects():
+    """Reset and yield the in-memory Firebase Storage stub.
+
+    Returns the underlying dict mapping blob_path -> {data, content_type} so
+    tests can assert on uploads/deletes performed by the routes under test.
+    """
+    bucket = app_routes.storage.bucket()
+    bucket._objects.clear()
+    try:
+        yield bucket._objects
+    finally:
+        bucket._objects.clear()
 
 
+@pytest.fixture
+def staff_auth_header():
+    return {"Authorization": "Bearer valid-staff-token"}

@@ -1,10 +1,16 @@
 from fastapi import APIRouter, HTTPException, Depends, Request, status
 from pydantic import BaseModel
 from typing import Optional, List
-from firebase_admin import auth, db
+import firebase_admin
+from firebase_admin import auth
 import json
 import time
 import secrets  # For generating session tokens
+
+from permissions import get_restaurant_role, can_manage_restaurant
+
+def _db():
+    return firebase_admin.db
 
 auth_router = APIRouter()
 
@@ -37,6 +43,12 @@ class UserResponse(BaseModel):
     name: Optional[str] = None
     restaurantId: Optional[str] = None
     is_admin: bool = False
+    restaurants: Optional[List[dict]] = None  # [{ id, name, role }]
+
+
+class InviteMemberData(BaseModel):
+    email: str
+    role: str  # "manager" | "staff"
 
 
 class UserListItem(BaseModel):
@@ -85,6 +97,36 @@ async def admin_only(request: Request):
     return token_data
 
 
+def _get_user_restaurants_with_roles(uid: str, is_admin: bool) -> tuple:
+    """
+    Return (restaurant_id_for_default, list of { id, name, role, is_owner }).
+    restaurant_id is first entry for backward compat (owned restaurants first, then name).
+    """
+    all_restaurants = _db().reference("restaurants").get() or {}
+    members_by_restaurant = _db().reference("restaurant_members").get() or {}
+    rows = []
+    for r_id, r_data in all_restaurants.items():
+        rid = str(r_id)
+        is_owner = r_data.get("owner_uid") == uid
+        role = None
+        if is_owner:
+            role = "manager"
+        elif rid in members_by_restaurant and uid in members_by_restaurant[rid]:
+            role = members_by_restaurant[rid][uid].get("role")  # "manager" or "staff"
+        if is_admin or role:
+            name = r_data.get("name", "Unnamed Restaurant")
+            rows.append(
+                {
+                    "id": rid,
+                    "name": name,
+                    "role": role if role else "manager",
+                    "is_owner": bool(is_owner),
+                }
+            )
+    rows.sort(key=lambda r: (0 if r["is_owner"] else 1, (r["name"] or "").lower()))
+    default_id = rows[0]["id"] if rows else None
+    return default_id, rows
+
 @auth_router.post("/register", response_model=UserResponse)
 async def register_user(user_data: UserRegister):
     """Register a new user with Firebase Auth"""
@@ -111,7 +153,7 @@ async def register_user(user_data: UserRegister):
         }
 
         # Save additional user data
-        user_ref = db.reference(f'users/{user_record.uid}')
+        user_ref = _db().reference(f'users/{user_record.uid}')
         user_ref.set({
             "email": user_data.email,
             "name": user_data.name,
@@ -119,23 +161,17 @@ async def register_user(user_data: UserRegister):
             "is_admin": is_admin,
             "created_at": int(time.time())
         })
-
-        # Try to find existing restaurant for this user
-        restaurant_ref = db.reference('restaurants')
-        restaurants = restaurant_ref.order_by_child(
-            'owner_uid').equal_to(user_record.uid).get()
-
-        restaurant_id = None
-        if restaurants:
-            restaurant_id = list(restaurants.keys())[0]
-
+        
+        restaurant_id, restaurants = _get_user_restaurants_with_roles(user_record.uid, is_admin)
+        
         return {
             "uid": user_record.uid,
             "email": user_record.email,
             "token": session_token,
             "name": user_data.name,
             "restaurantId": restaurant_id,
-            "is_admin": is_admin
+            "is_admin": is_admin,
+            "restaurants": restaurants,
         }
     except auth.EmailAlreadyExistsError:
         raise HTTPException(
@@ -158,7 +194,7 @@ async def login_user(login_data: LoginData):
         user = auth.get_user_by_email(login_data.email)
 
         # Get user data to check admin status and get name
-        user_ref = db.reference(f'users/{user.uid}')
+        user_ref = _db().reference(f'users/{user.uid}')
         user_data = user_ref.get()
         is_admin = user_data.get('is_admin', False) if user_data else False
         name = user_data.get('name') if user_data else user.display_name
@@ -173,23 +209,17 @@ async def login_user(login_data: LoginData):
             "name": name,
             "is_admin": is_admin
         }
-
-        # Get restaurant ID if exists
-        restaurant_ref = db.reference('restaurants')
-        restaurants = restaurant_ref.order_by_child(
-            'owner_uid').equal_to(user.uid).get()
-
-        restaurant_id = None
-        if restaurants:
-            restaurant_id = list(restaurants.keys())[0]
-
+        
+        restaurant_id, restaurants = _get_user_restaurants_with_roles(user.uid, is_admin)
+        
         return {
             "uid": user.uid,
             "email": user.email,
             "token": session_token,
             "name": name,
             "restaurantId": restaurant_id,
-            "is_admin": is_admin
+            "is_admin": is_admin,
+            "restaurants": restaurants,
         }
     except auth.UserNotFoundError:
         raise HTTPException(
@@ -213,32 +243,112 @@ async def get_current_user(token_data: dict = Depends(verify_token)):
         user = auth.get_user(uid)
 
         # Get user data from Realtime Database to include admin status and name
-        user_ref = db.reference(f'users/{uid}')
+        user_ref = _db().reference(f'users/{uid}')
         user_data = user_ref.get()
         is_admin = user_data.get('is_admin', False) if user_data else False
         name = user_data.get('name') if user_data else user.display_name
-
-        # Get restaurant ID if exists
-        restaurant_ref = db.reference('restaurants')
-        restaurants = restaurant_ref.order_by_child(
-            'owner_uid').equal_to(uid).get()
-
-        restaurant_id = None
-        if restaurants:
-            restaurant_id = list(restaurants.keys())[0]
-
+        
+        restaurant_id, restaurants = _get_user_restaurants_with_roles(uid, is_admin)
+        
         return {
             "uid": uid,
             "email": user.email,
             "name": name,
             "restaurantId": restaurant_id,
-            "is_admin": is_admin
+            "is_admin": is_admin,
+            "restaurants": restaurants,
         }
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error getting user: {str(e)}"
         )
+
+
+# --- Restaurant team (manager-only) ---
+
+@auth_router.get("/restaurants/{restaurant_id}/members")
+async def get_restaurant_members(restaurant_id: str, token_data: dict = Depends(verify_token)):
+    """List members of a restaurant. Manager or admin only."""
+    uid = token_data.get("uid")
+    is_admin = token_data.get("is_admin", False)
+    if not can_manage_restaurant(_db(), uid, restaurant_id, is_admin):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Manager access required")
+    restaurant_ref = _db().reference(f"restaurants/{restaurant_id}")
+    if not restaurant_ref.get():
+        raise HTTPException(status_code=404, detail="Restaurant not found")
+    members_ref = _db().reference(f"restaurant_members/{restaurant_id}")
+    members = members_ref.get() or {}
+    restaurant_data = restaurant_ref.get()
+    owner_uid = restaurant_data.get("owner_uid")
+    out = []
+    if owner_uid:
+        try:
+            owner = auth.get_user(owner_uid)
+            out.append({"uid": owner_uid, "email": owner.email, "role": "manager", "is_owner": True})
+        except Exception:
+            out.append({"uid": owner_uid, "email": "?", "role": "manager", "is_owner": True})
+    for member_uid, data in members.items():
+        if member_uid == owner_uid:
+            continue
+        try:
+            u = auth.get_user(member_uid)
+            out.append({"uid": member_uid, "email": u.email, "role": data.get("role", "staff"), "is_owner": False})
+        except Exception:
+            out.append({"uid": member_uid, "email": "?", "role": data.get("role", "staff"), "is_owner": False})
+    return {"members": out}
+
+
+@auth_router.post("/restaurants/{restaurant_id}/members")
+async def invite_restaurant_member(restaurant_id: str, body: InviteMemberData, token_data: dict = Depends(verify_token)):
+    """Invite a user by email to the restaurant. Manager or admin only."""
+    if body.role not in ("manager", "staff"):
+        raise HTTPException(status_code=400, detail="role must be 'manager' or 'staff'")
+    uid = token_data.get("uid")
+    is_admin = token_data.get("is_admin", False)
+    if not can_manage_restaurant(_db(), uid, restaurant_id, is_admin):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Manager access required")
+    restaurant_ref = _db().reference(f"restaurants/{restaurant_id}")
+    if not restaurant_ref.get():
+        raise HTTPException(status_code=404, detail="Restaurant not found")
+    try:
+        user = auth.get_user_by_email(body.email)
+    except auth.UserNotFoundError:
+        raise HTTPException(status_code=404, detail="User not found with that email")
+    member_uid = user.uid
+    members_ref = _db().reference(f"restaurant_members/{restaurant_id}")
+    members = members_ref.get() or {}
+    if member_uid in members:
+        raise HTTPException(status_code=400, detail="User is already a member")
+    restaurant_data = restaurant_ref.get()
+    if restaurant_data.get("owner_uid") == member_uid:
+        raise HTTPException(status_code=400, detail="Owner is already a member")
+    members[member_uid] = {"role": body.role}
+    members_ref.set(members)
+    return {"message": f"Added {body.email} as {body.role}"}
+
+
+@auth_router.delete("/restaurants/{restaurant_id}/members/{member_uid}")
+async def remove_restaurant_member(restaurant_id: str, member_uid: str, token_data: dict = Depends(verify_token)):
+    """Remove a member. Manager or admin only. Cannot remove owner."""
+    uid = token_data.get("uid")
+    is_admin = token_data.get("is_admin", False)
+    if not can_manage_restaurant(_db(), uid, restaurant_id, is_admin):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Manager access required")
+    restaurant_ref = _db().reference(f"restaurants/{restaurant_id}")
+    restaurant_data = restaurant_ref.get()
+    if not restaurant_data:
+        raise HTTPException(status_code=404, detail="Restaurant not found")
+    if restaurant_data.get("owner_uid") == member_uid:
+        raise HTTPException(status_code=400, detail="Cannot remove the restaurant owner")
+    members_ref = _db().reference(f"restaurant_members/{restaurant_id}")
+    members = members_ref.get() or {}
+    if member_uid not in members:
+        raise HTTPException(status_code=404, detail="Member not found")
+    del members[member_uid]
+    members_ref.set(members)
+    return {"message": "Member removed"}
+
 
 # Add a method to get all users (admin-only)
 
@@ -248,14 +358,14 @@ async def get_all_users(token_data: dict = Depends(admin_only)):
     """Get all users (admin only)"""
     try:
         # Get all users from database
-        users_ref = db.reference('users')
+        users_ref = _db().reference('users')
         all_users = users_ref.get()
 
         if not all_users:
             return []
 
         # Get all restaurants for lookup
-        restaurant_ref = db.reference('restaurants')
+        restaurant_ref = _db().reference('restaurants')
         all_restaurants = restaurant_ref.get() or {}
 
         # Build restaurant mapping (owner uid -> restaurant name)
@@ -309,7 +419,7 @@ async def make_user_admin_by_email(admin_data: MakeAdminData, token_data: dict =
         user = auth.get_user_by_email(admin_data.email)
 
         # Update user record in database
-        user_ref = db.reference(f'users/{user.uid}')
+        user_ref = _db().reference(f'users/{user.uid}')
         user_ref.update({
             "is_admin": True
         })
@@ -342,7 +452,7 @@ async def make_user_admin(user_id: str, token_data: dict = Depends(admin_only)):
         user = auth.get_user(user_id)
 
         # Update user record in database
-        user_ref = db.reference(f'users/{user_id}')
+        user_ref = _db().reference(f'users/{user_id}')
         user_ref.update({
             "is_admin": True
         })
@@ -403,7 +513,7 @@ async def remove_user_admin_by_email(admin_data: MakeAdminData, token_data: dict
         user = auth.get_user_by_email(admin_data.email)
 
         # Update user record in database
-        user_ref = db.reference(f'users/{user.uid}')
+        user_ref = _db().reference(f'users/{user.uid}')
         user_ref.update({
             "is_admin": False
         })

@@ -37,11 +37,14 @@ beforeEach(() => {
   jest.clearAllMocks();
   localStorage.clear();
 
-  // Default user has access to restaurantId 'abc'
+  // Default user has access to restaurantId 'abc' (restaurants list required for access check)
   api.getCurrentUser.mockResolvedValue({
     uid: "u1",
     is_admin: false,
     restaurantId: "abc",
+    restaurants: [
+      { id: "abc", name: "Adrian's Cafe", role: "manager", is_owner: true },
+    ],
     name: "Adrian",
     email: "a@example.com",
   });
