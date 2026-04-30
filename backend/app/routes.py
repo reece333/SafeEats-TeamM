@@ -1081,9 +1081,16 @@ async def add_menu_item(
         # 🔥 1. Run your parser on ingredients
         parsed = parse_ingredients(menu_item.ingredients)
 
-        # 🔥 2. Inject intelligent results
-        menu_item_dict["allergens"] = parsed["allergens"]
-        menu_item_dict["dietaryCategories"] = parsed["dietaryCategories"]
+        # 🔥 2. Merge parser-detected allergens/categories with user-supplied
+        # values. The parser augments manual input; it must never silently
+        # discard fields the user explicitly set on the menu item.
+        menu_item_dict["allergens"] = sorted(
+            set(menu_item.allergens) | set(parsed.get("allergens") or [])
+        )
+        menu_item_dict["dietaryCategories"] = sorted(
+            set(menu_item.dietaryCategories)
+            | set(parsed.get("dietaryCategories") or [])
+        )
 
         # Add restaurant_id and item_id to the menu item data --> build final object
         menu_item_data = {
