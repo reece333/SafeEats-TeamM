@@ -183,7 +183,11 @@ const ManageMenuItems = () => {
   const duplicateMenuItem = async (itemId) => {
     try {
       const duplicated = await api.duplicateMenuItem(restaurantId, itemId);
-      setMenuItems((prev) => [duplicated, ...prev]);
+      // If API returned the new item, insert it locally for immediate feedback.
+      if (duplicated && duplicated.id) {
+        setMenuItems((prev) => [duplicated, ...prev]);
+      }
+      await refreshMenuItems();
     } catch (dupError) {
       setError(dupError?.message || 'Failed to duplicate menu item');
     }
@@ -191,22 +195,50 @@ const ManageMenuItems = () => {
 
   const toggleArchiveMenuItem = async (item) => {
     try {
-      const updated = item.archived
-        ? await api.restoreMenuItem(restaurantId, item.id)
-        : await api.archiveMenuItem(restaurantId, item.id);
+      const nextArchived = !item.archived;
+      const updated = nextArchived
+        ? await api.archiveMenuItem(restaurantId, item.id)
+        : await api.restoreMenuItem(restaurantId, item.id);
 
       // Preserve a previously-known fresh signed URL: archive/restore
       // responses come straight from the DB record, where image_url is
       // intentionally NOT persisted long-term (signed URLs expire). Without
       // this preservation, archiving an item would visually drop its
       // thumbnail until the next full menu refetch.
-      setMenuItems((prev) => prev.map((entry) => {
-        if (entry.id !== updated.id) return entry;
-        return {
+      setMenuItems((prev) => {
+        const nextItem = {
+          ...item,
           ...updated,
-          image_url: updated.image_url || entry.image_url,
+          archived: typeof updated?.archived === 'boolean' ? updated.archived : nextArchived,
+          image_url: updated?.image_url || item.image_url,
         };
-      }));
+
+        // If the item was archived (now archived=true) and the UI is
+        // currently hiding archived items, remove it from the active list.
+        if (nextItem.archived) {
+          if (!showArchived) {
+            return prev.filter((entry) => entry.id !== nextItem.id);
+          }
+          // If archived items are shown, replace the existing entry.
+          return prev.map((entry) => {
+            if (entry.id !== nextItem.id) return entry;
+            return { ...nextItem, image_url: nextItem.image_url || entry.image_url };
+          });
+        }
+
+        // If the item was restored (archived=false), ensure it appears
+        // in the active list. If it already exists, replace it; otherwise
+        // prepend it so the user sees it immediately.
+        const exists = prev.some((entry) => entry.id === nextItem.id);
+        if (exists) {
+          return prev.map((entry) => {
+            if (entry.id !== nextItem.id) return entry;
+            return { ...nextItem, image_url: nextItem.image_url || entry.image_url };
+          });
+        }
+        return [nextItem, ...prev];
+      });
+      await refreshMenuItems();
     } catch (archiveError) {
       setError(archiveError?.message || 'Failed to update menu item status');
     }
@@ -421,238 +453,245 @@ const ManageMenuItems = () => {
         </div>
       )}
 
-      <div className='flex flex-col justify-center items-center'>
-        <div className="w-[55%] mb-6 flex flex-col items-center">
-          <button
+      <div className="flex flex-col md:flex-row gap-6">
+        {/* Left column: Existing menu + bulk panel */}
+        <div className="mt-10 md:order-1 md:w-1/3 pr-4">
+          <div className="flex flex-col gap-3 mb-4">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <h2 className="text-2xl font-semibold">Existing Menu Items</h2>
+              <div className="flex flex-wrap gap-2">
+                <button
+                  onClick={handleToggleArchived}
+                  className="px-4 py-2 rounded-md border border-gray-300 bg-white hover:bg-gray-50"
+                >
+                  {showArchived ? 'Hide Archived' : 'Show Archived'}
+                </button>
+                <button
+                  onClick={exportCsv}
+                  className="px-4 py-2 rounded-md bg-[#8DB670] text-white hover:bg-[#6c8b55]"
+                >
+                  Export CSV
+                </button>
+              </div>
+            </div>
+
+            {selectedItemIds.length > 0 && (
+              <div className="border border-[#8DB670] bg-green-50 rounded-xl p-4">
+                <div className="flex flex-col gap-3">
+                  <div className="flex items-center justify-between gap-3">
+                    <p className="font-medium">{selectedItemIds.length} item{selectedItemIds.length === 1 ? '' : 's'} selected</p>
+                    <button
+                      onClick={openBulkConfirmDialog}
+                      className="px-4 py-2 rounded-md bg-[#8DB670] text-white hover:bg-[#6c8b55]"
+                    >
+                      Review Bulk Changes
+                    </button>
+                  </div>
+
+                  <div className="grid gap-4 md:grid-cols-2">
+                    <div>
+                      <p className="font-medium mb-2">Add allergen tags</p>
+                      <div className="flex flex-wrap gap-2">
+                        {allergenOptions.map((option) => (
+                          <button
+                            key={`add-allergen-${option.id}`}
+                            onClick={() => toggleBulkValue('addAllergens', option.id)}
+                            className={`px-3 py-1 rounded-full border ${bulkDraft.addAllergens.includes(option.id) ? 'bg-[#8DB670] text-white border-[#8DB670]' : 'bg-white'}`}
+                          >
+                            {option.label}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
+                    <div>
+                      <p className="font-medium mb-2">Remove allergen tags</p>
+                      <div className="flex flex-wrap gap-2">
+                        {allergenOptions.map((option) => (
+                          <button
+                            key={`remove-allergen-${option.id}`}
+                            onClick={() => toggleBulkValue('removeAllergens', option.id)}
+                            className={`px-3 py-1 rounded-full border ${bulkDraft.removeAllergens.includes(option.id) ? 'bg-red-600 text-white border-red-600' : 'bg-white'}`}
+                          >
+                            {option.label}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
+                    <div>
+                      <p className="font-medium mb-2">Add dietary labels</p>
+                      <div className="flex flex-wrap gap-2">
+                        {dietaryCategories.map((option) => (
+                          <button
+                            key={`add-dietary-${option.id}`}
+                            onClick={() => toggleBulkValue('addDietaryCategories', option.id)}
+                            className={`px-3 py-1 rounded-full border ${bulkDraft.addDietaryCategories.includes(option.id) ? 'bg-[#8DB670] text-white border-[#8DB670]' : 'bg-white'}`}
+                          >
+                            {option.label}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
+                    <div>
+                      <p className="font-medium mb-2">Remove dietary labels</p>
+                      <div className="flex flex-wrap gap-2">
+                        {dietaryCategories.map((option) => (
+                          <button
+                            key={`remove-dietary-${option.id}`}
+                            onClick={() => toggleBulkValue('removeDietaryCategories', option.id)}
+                            className={`px-3 py-1 rounded-full border ${bulkDraft.removeDietaryCategories.includes(option.id) ? 'bg-red-600 text-white border-red-600' : 'bg-white'}`}
+                          >
+                            {option.label}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            <div className="space-y-3 max-h-[70vh] overflow-y-auto pr-2">
+              {visibleMenuItems.length === 0 ? (
+                <p className="text-gray-500">No menu items found.</p>
+              ) : (
+                visibleMenuItems.map((item) => (
+                  <div key={item.id} className="border rounded-xl p-4 bg-white shadow-sm">
+                    <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-4">
+                      <div className="flex items-start gap-3">
+                        <input
+                          type="checkbox"
+                          checked={selectedItemIds.includes(item.id)}
+                          onChange={() => toggleSelectedItem(item.id)}
+                          className="mt-1 h-4 w-4"
+                        />
+                        {item.image_url ? (
+                          <img
+                            src={item.image_url}
+                            alt={item.name || 'Menu item photo'}
+                            className="w-20 h-20 object-cover rounded-md shadow-sm flex-shrink-0"
+                            onError={handleSignedUrlExpired}
+                          />
+                        ) : (
+                          <div
+                            className="w-20 h-20 rounded-md flex flex-col items-center justify-center text-gray-400 bg-gray-100 border border-dashed border-gray-300 flex-shrink-0"
+                            aria-label="No photo"
+                            title="No photo for this item"
+                          >
+                            <span className="text-xl leading-none">📷</span>
+                            <span className="text-[10px] mt-1">No photo</span>
+                          </div>
+                        )}
+                        <div>
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <h3 className="text-lg font-semibold">{item.name}</h3>
+                            {item.archived && (
+                              <span className="text-xs px-2 py-1 rounded-full bg-gray-200 text-gray-700">Archived</span>
+                            )}
+                          </div>
+                          <p className="text-sm text-gray-600">{item.description}</p>
+                          <p className="text-sm text-gray-800 font-medium mt-1">
+                            ${typeof item.price === 'number' ? item.price.toFixed(2) : String(item.price || '0.00')}
+                          </p>
+                          {item.ingredients && (
+                            <p className="text-sm text-gray-600 mt-1"><span className="font-medium">Ingredients:</span> {item.ingredients}</p>
+                          )}
+                          <p className="text-sm text-gray-600 mt-1">
+                            <span className="font-medium">Allergens:</span> {(item.allergens || []).join(', ') || 'None'}
+                          </p>
+                          <p className="text-sm text-gray-600">
+                            <span className="font-medium">Dietary:</span> {(item.dietaryCategories || []).join(', ') || 'None'}
+                          </p>
+                        </div>
+                      </div>
+
+                      <div className="flex flex-wrap gap-2">
+                        <button
+                          onClick={() => duplicateMenuItem(item.id)}
+                          className="px-3 py-2 rounded-md border border-gray-300 bg-white hover:bg-gray-50"
+                        >
+                          Duplicate
+                        </button>
+                        <button
+                          onClick={() => toggleArchiveMenuItem(item)}
+                          className="px-3 py-2 rounded-md text-white bg-gray-700 hover:bg-gray-800"
+                        >
+                          {item.archived ? 'Restore' : 'Archive'}
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
+        </div>
+
+        {/* Right column: Add menu forms (on small screens stacks below) */}
+        <div className='flex flex-col justify-center items-center md:order-2 md:w-2/3 mt-10 md:mt-16'>
+          <div className="w-[55%] mb-6 flex flex-col items-center">
+            <button
               onClick={() => document.getElementById('file-upload').click()}
               className="block w-full max-w-96 text-center bg-[#8DB670] rounded-xl pt-4 pb-4 font-semibold text-white mt-2 hover:bg-[#6c8b55] disabled:bg-gray-400"
             >
               Import Menu (PNG/JPEG/PDF)
             </button>
-          <input id="file-upload" type="file" accept="image/png, image/jpeg, application/pdf" onChange={handleIngestFile} className="hidden"/>
-          {isIngesting && (
-            <div className="text-sm text-gray-600 mt-2">Extracting items...</div>
-          )}
-          {ingestedItems.length > 0 && (
-            <div className="text-sm text-gray-700 mt-2">Imported {ingestedItems.length} items. Review and edit below, then click "Add All Items".</div>
-          )}
-        </div>
-        {menuForms.map((formIndex, arrayIndex) => (
-          <div
-            key={formIndex}
-            ref={arrayIndex === menuForms.length - 1 ? lastFormRef : null}>
-            <MenuItemForm
-              formIndex={formIndex}
-              restaurantOptions={restaurants}
-              onRemove={() => confirmRemoveMenuItem(formIndex)}
-              onFormChange={(data) => handleFormChange(formIndex, data)}
-              initialData={menuItemsData[formIndex] || {}}
-            />
-          </div>
-        ))}
-      </div>
-
-      <div className="mt-10">
-        <div className="flex flex-col gap-3 mb-4">
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <h2 className="text-2xl font-semibold">Existing Menu Items</h2>
-            <div className="flex flex-wrap gap-2">
-              <button
-                onClick={handleToggleArchived}
-                className="px-4 py-2 rounded-md border border-gray-300 bg-white hover:bg-gray-50"
-              >
-                {showArchived ? 'Hide Archived' : 'Show Archived'}
-              </button>
-              <button
-                onClick={exportCsv}
-                className="px-4 py-2 rounded-md bg-[#8DB670] text-white hover:bg-[#6c8b55]"
-              >
-                Export CSV
-              </button>
-            </div>
-          </div>
-
-          {selectedItemIds.length > 0 && (
-            <div className="border border-[#8DB670] bg-green-50 rounded-xl p-4">
-              <div className="flex flex-col gap-3">
-                <div className="flex items-center justify-between gap-3">
-                  <p className="font-medium">{selectedItemIds.length} item{selectedItemIds.length === 1 ? '' : 's'} selected</p>
-                  <button
-                    onClick={openBulkConfirmDialog}
-                    className="px-4 py-2 rounded-md bg-[#8DB670] text-white hover:bg-[#6c8b55]"
-                  >
-                    Review Bulk Changes
-                  </button>
-                </div>
-
-                <div className="grid gap-4 md:grid-cols-2">
-                  <div>
-                    <p className="font-medium mb-2">Add allergen tags</p>
-                    <div className="flex flex-wrap gap-2">
-                      {allergenOptions.map((option) => (
-                        <button
-                          key={`add-allergen-${option.id}`}
-                          onClick={() => toggleBulkValue('addAllergens', option.id)}
-                          className={`px-3 py-1 rounded-full border ${bulkDraft.addAllergens.includes(option.id) ? 'bg-[#8DB670] text-white border-[#8DB670]' : 'bg-white'}`}
-                        >
-                          {option.label}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-
-                  <div>
-                    <p className="font-medium mb-2">Remove allergen tags</p>
-                    <div className="flex flex-wrap gap-2">
-                      {allergenOptions.map((option) => (
-                        <button
-                          key={`remove-allergen-${option.id}`}
-                          onClick={() => toggleBulkValue('removeAllergens', option.id)}
-                          className={`px-3 py-1 rounded-full border ${bulkDraft.removeAllergens.includes(option.id) ? 'bg-red-600 text-white border-red-600' : 'bg-white'}`}
-                        >
-                          {option.label}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-
-                  <div>
-                    <p className="font-medium mb-2">Add dietary labels</p>
-                    <div className="flex flex-wrap gap-2">
-                      {dietaryCategories.map((option) => (
-                        <button
-                          key={`add-dietary-${option.id}`}
-                          onClick={() => toggleBulkValue('addDietaryCategories', option.id)}
-                          className={`px-3 py-1 rounded-full border ${bulkDraft.addDietaryCategories.includes(option.id) ? 'bg-[#8DB670] text-white border-[#8DB670]' : 'bg-white'}`}
-                        >
-                          {option.label}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-
-                  <div>
-                    <p className="font-medium mb-2">Remove dietary labels</p>
-                    <div className="flex flex-wrap gap-2">
-                      {dietaryCategories.map((option) => (
-                        <button
-                          key={`remove-dietary-${option.id}`}
-                          onClick={() => toggleBulkValue('removeDietaryCategories', option.id)}
-                          className={`px-3 py-1 rounded-full border ${bulkDraft.removeDietaryCategories.includes(option.id) ? 'bg-red-600 text-white border-red-600' : 'bg-white'}`}
-                        >
-                          {option.label}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </div>
-          )}
-
-          <div className="space-y-3">
-            {visibleMenuItems.length === 0 ? (
-              <p className="text-gray-500">No menu items found.</p>
-            ) : (
-              visibleMenuItems.map((item) => (
-                <div key={item.id} className="border rounded-xl p-4 bg-white shadow-sm">
-                  <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-4">
-                    <div className="flex items-start gap-3">
-                      <input
-                        type="checkbox"
-                        checked={selectedItemIds.includes(item.id)}
-                        onChange={() => toggleSelectedItem(item.id)}
-                        className="mt-1 h-4 w-4"
-                      />
-                      {item.image_url ? (
-                        <img
-                          src={item.image_url}
-                          alt={item.name || 'Menu item photo'}
-                          className="w-20 h-20 object-cover rounded-md shadow-sm flex-shrink-0"
-                          onError={handleSignedUrlExpired}
-                        />
-                      ) : (
-                        <div
-                          className="w-20 h-20 rounded-md flex flex-col items-center justify-center text-gray-400 bg-gray-100 border border-dashed border-gray-300 flex-shrink-0"
-                          aria-label="No photo"
-                          title="No photo for this item"
-                        >
-                          <span className="text-xl leading-none">📷</span>
-                          <span className="text-[10px] mt-1">No photo</span>
-                        </div>
-                      )}
-                      <div>
-                        <div className="flex items-center gap-2 flex-wrap">
-                          <h3 className="text-lg font-semibold">{item.name}</h3>
-                          {item.archived && (
-                            <span className="text-xs px-2 py-1 rounded-full bg-gray-200 text-gray-700">Archived</span>
-                          )}
-                        </div>
-                        <p className="text-sm text-gray-600">{item.description}</p>
-                        <p className="text-sm text-gray-800 font-medium mt-1">
-                          ${typeof item.price === 'number' ? item.price.toFixed(2) : String(item.price || '0.00')}
-                        </p>
-                        {item.ingredients && (
-                          <p className="text-sm text-gray-600 mt-1"><span className="font-medium">Ingredients:</span> {item.ingredients}</p>
-                        )}
-                        <p className="text-sm text-gray-600 mt-1">
-                          <span className="font-medium">Allergens:</span> {(item.allergens || []).join(', ') || 'None'}
-                        </p>
-                        <p className="text-sm text-gray-600">
-                          <span className="font-medium">Dietary:</span> {(item.dietaryCategories || []).join(', ') || 'None'}
-                        </p>
-                      </div>
-                    </div>
-
-                    <div className="flex flex-wrap gap-2">
-                      <button
-                        onClick={() => duplicateMenuItem(item.id)}
-                        className="px-3 py-2 rounded-md border border-gray-300 bg-white hover:bg-gray-50"
-                      >
-                        Duplicate
-                      </button>
-                      <button
-                        onClick={() => toggleArchiveMenuItem(item)}
-                        className="px-3 py-2 rounded-md text-white bg-gray-700 hover:bg-gray-800"
-                      >
-                        {item.archived ? 'Restore' : 'Archive'}
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              ))
+            <input id="file-upload" type="file" accept="image/png, image/jpeg, application/pdf" onChange={handleIngestFile} className="hidden"/>
+            {isIngesting && (
+              <div className="text-sm text-gray-600 mt-2">Extracting items...</div>
+            )}
+            {ingestedItems.length > 0 && (
+              <div className="text-sm text-gray-700 mt-2">Imported {ingestedItems.length} items. Review and edit below, then click "Add All Items".</div>
             )}
           </div>
-        </div>
-      </div>
 
-      <div className='w-full flex flex-col justify-center items-center'>
-        <div className="w-[55%]">
-          <button 
-              onClick={addMenuItem} 
-              className="block w-12 h-12 float-right bg-[#8DB670] rounded-full hover:bg-[#6c8b55] justify-items-center"
-              title="Add another item"
-            >
-              <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#ffffff" strokeWidth="5" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
-          </button>
-          <div className='clear-right flex flex-col justify-center items-center gap-6 mt-10'>
-            <button
-              onClick={handleAddAllItems}
-              disabled={loading}
-              className="block w-full max-w-96 text-center bg-[#8DB670] rounded-xl pt-4 pb-4 font-semibold text-white mt-2 hover:bg-[#6c8b55] disabled:bg-gray-400"
-            >
-              {loading ? 'Adding Items...' : 'Add All Items'}
-            </button>
+          {menuForms.map((formIndex, arrayIndex) => (
+            <div
+              key={formIndex}
+              ref={arrayIndex === menuForms.length - 1 ? lastFormRef : null}>
+              <MenuItemForm
+                formIndex={formIndex}
+                restaurantOptions={restaurants}
+                onRemove={() => confirmRemoveMenuItem(formIndex)}
+                onFormChange={(data) => handleFormChange(formIndex, data)}
+                initialData={menuItemsData[formIndex] || {}}
+              />
+            </div>
+          ))}
 
-            <button
-              onClick={handleBackToRestaurant}
-              className="bg-gray-500 text-white py-2 px-4 rounded-md hover:bg-gray-600"
-            >
-              Cancel
-            </button>
+          <div className='w-full flex flex-col justify-center items-center mt-6'>
+            <div className="w-[55%]">
+              <button 
+                onClick={addMenuItem} 
+                className="block w-12 h-12 float-right bg-[#8DB670] rounded-full hover:bg-[#6c8b55] justify-items-center"
+                title="Add another item"
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#ffffff" strokeWidth="5" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
+              </button>
+              <div className='clear-right flex flex-col justify-center items-center gap-6 mt-10'>
+                <button
+                  onClick={handleAddAllItems}
+                  disabled={loading}
+                  className="block w-full max-w-96 text-center bg-[#8DB670] rounded-xl pt-4 pb-4 font-semibold text-white mt-2 hover:bg-[#6c8b55] disabled:bg-gray-400"
+                >
+                  {loading ? 'Adding Items...' : 'Add All Items'}
+                </button>
+
+                <button
+                  onClick={handleBackToRestaurant}
+                  className="bg-gray-500 text-white py-2 px-4 rounded-md hover:bg-gray-600"
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
           </div>
         </div>
       </div>
+
+      
 
       {/* Confirmation Dialog for item deletion - Styled like UserManagement */}
       {showConfirmDialog && (
