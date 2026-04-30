@@ -29,6 +29,7 @@ venv/
 **/venv/
 __pycache__/
 *.pyc
+backend/.venv/
 
 # React/Node
 node_modules/
