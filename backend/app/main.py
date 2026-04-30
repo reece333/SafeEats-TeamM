@@ -1,3 +1,7 @@
+from routes import router
+from firebase_admin import credentials
+from dotenv import load_dotenv
+import json
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 import firebase_admin
@@ -24,13 +28,9 @@ app.add_middleware(
     max_age=600,
 )
 
-import os
-import json
-from dotenv import load_dotenv
-import firebase_admin
-from firebase_admin import credentials
 
 load_dotenv()
+
 
 def initialize_firebase():
     try:
@@ -38,15 +38,15 @@ def initialize_firebase():
         cred_json = os.getenv('FIREBASE_CREDENTIALS')
         if not cred_json:
             raise ValueError("FIREBASE_CREDENTIALS not found in environment")
-            
+
         # Parse the JSON string into a dictionary
         cred_dict = json.loads(cred_json)
-        
+
         # Get database URL from environment
         database_url = os.getenv('DATABASE_URL')
         if not database_url:
             raise ValueError("DATABASE_URL not found in environment")
-            
+
         # Initialize Firebase
         firebase_admin.initialize_app(credentials.Certificate(cred_dict), {
             'databaseURL': database_url
@@ -57,10 +57,11 @@ def initialize_firebase():
         import traceback
         traceback.print_exc()
 
+
 initialize_firebase()
 # Import and include your router
-from routes import router
 app.include_router(router)
+
 
 @app.get("/")
 async def root():
